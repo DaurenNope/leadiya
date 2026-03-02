@@ -1,0 +1,43 @@
+{
+    "name": "clawdbot-sales-engine",
+    "version": "1.0.0",
+    "description": "Fully automated lead generation, qualification, and closing for Moltbot",
+    "main": "dist/index.js",
+    "type": "module",
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsx watch src/index.ts",
+        "start": "node dist/index.js",
+        "test": "vitest"
+    },
+    "dependencies": {
+        "@anthropic-ai/sdk": "^0.71.2",
+        "@hono/node-server": "^1.19.9",
+        "@supabase/supabase-js": "^2.95.3",
+        "@types/uuid": "^10.0.0",
+        "@whiskeysockets/baileys": "^7.0.0-rc.9",
+        "date-fns": "^3.3.1",
+        "dotenv": "^17.2.3",
+        "grammy": "^1.39.3",
+        "handlebars": "^4.7.8",
+        "hono": "^4.11.7",
+        "input": "^1.0.1",
+        "pdfkit": "^0.17.2",
+        "pg": "^8.18.0",
+        "playwright": "^1.58.1",
+        "qrcode-terminal": "^0.12.0",
+        "redis": "^4.6.12",
+        "telegram": "^2.26.22",
+        "uuid": "^13.0.0",
+        "yaml": "^2.3.4",
+        "zod": "^3.22.4"
+    },
+    "devDependencies": {
+        "@types/node": "^20.11.0",
+        "@types/pdfkit": "^0.17.4",
+        "@types/qrcode-terminal": "^0.12.2",
+        "tsx": "^4.7.0",
+        "typescript": "^5.3.3",
+        "vitest": "^1.2.0"
+    }
+}

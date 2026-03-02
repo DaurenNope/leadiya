@@ -1,0 +1,93 @@
+# Business Configuration
+# Rahmet Labs - Digital Solutions for Kazakhstan B2B
+
+company:
+  name: "Rahmet Labs"
+  name_ru: "Рахмет Лабс"
+  tagline: "Digital Solutions Agency"
+  tagline_ru: "Цифровые решения для бизнеса"
+  website: "https://rahmetlabs.xyz"
+  calendar_url: "https://cal.com/rahmetlabs/30min"
+  whatsapp: "+77XXXXXXXXX"  # Update with your number
+   
+product:
+  name: "Цифровые решения"
+  description: "Сайты, автоматизация, CRM, мобильные приложения"
+  
+  # Value propositions (Russian)
+  value_props:
+    - "Делаем сайты и веб-сервисы за недели, не месяцы"
+    - "Автоматизируем рутинные процессы — экономим ваше время"
+    - "От идеи до работающего продукта"
+    - "Интеграции с 1С, Kaspi, WhatsApp, Telegram"
+  
+  # Services we offer
+  services:
+    - name: "Разработка сайтов"
+      description: "Корпоративные сайты, лендинги, интернет-магазины"
+    - name: "Автоматизация"
+      description: "CRM, интеграции, боты, внутренние системы"
+    - name: "Мобильные приложения"
+      description: "iOS, Android, кроссплатформа"
+    - name: "AI-решения"
+      description: "Чат-боты, аналитика, автоматизация с ИИ"
+  
+  # Common pain points for KZ market
+  pain_points:
+    - "ручные процессы съедают время"
+    - "нет нормального сайта"
+    - "клиенты теряются без CRM"
+    - "конкуренты уже оцифровались"
+    - "1С не интегрируется с онлайном"
+
+channels:
+  primary: whatsapp
+  fallback: email
+  tertiary: telegram
+
+voice:
+  tone: professional_friendly
+  language: ru  # Russian primary
+  languages_supported:
+    - ru  # Russian
+    - kk  # Kazakh
+    - en  # English fallback
+  signature: "— Команда Rahmet Labs"
+  signature_kk: "— Rahmet Labs командасы"
+  
+  # Personality traits for AI messages
+  traits:
+    - direct
+    - helpful
+    - respectful
+    - solution_oriented
+    - no_fluff
+
+automation:
+  mode: fully_automatic
+  
+  # Safety limits for WhatsApp (Baileys)
+  max_outreach_per_day: 30  # Conservative for Baileys
+  max_outreach_per_hour: 10
+  delay_between_messages_ms: 45000  # 45 seconds min
+  max_followups_per_lead: 3
+  cooldown_after_response: true
+
+discovery:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  
+  sources:
+    # Primary: KZ business directories
+    - 2gis
+    - kompra
+    - yandex-maps
+    
+    # Secondary: Companies hiring devs
+    - headhunter
+    
+    # Tertiary: Tech content
+    - vcru
+    - telegram
+    
+    # Inbound
+    - webhook

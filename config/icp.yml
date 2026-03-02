@@ -1,0 +1,162 @@
+# Ideal Customer Profile (ICP)
+# Targeting Kazakhstan B2B - Digital Solutions
+# Services: Websites, Automation, CRM, Custom Software
+
+targeting:
+  # Industries from 2GIS scraping + typical digital needs
+  industries:
+    include:
+      # Education (scraped)
+      - university
+      - education
+      - private school
+      - college
+      - training center
+      # Business services (scraped)
+      - logistics
+      - construction
+      - real estate
+      - developer  # property developers
+      # High-need industries
+      - retail
+      - manufacturing
+      - wholesale
+      - hotel
+      - restaurant
+      - clinic
+      - medical
+      - beauty
+      - fitness
+    exclude:
+      - gambling
+      - adult
+      - government  # too slow to close
+    weight: 20
+
+  # Company size (employees) - small to medium businesses
+  company_size:
+    min: 3
+    max: 500
+    ideal_min: 10
+    ideal_max: 100
+    weight: 15
+
+  # Target roles/titles
+  roles:
+    include:
+      - директор
+      - руководитель
+      - owner
+      - founder
+      - ceo
+      - cto
+      - ит-директор
+      - маркетолог
+      - head of marketing
+    exclude:
+      - intern
+      - student
+      - стажер
+      - практикант
+    weight: 25
+
+  # Geographic focus
+  geography:
+    include:
+      - kazakhstan
+      - almaty
+      - astana
+      - shymkent
+      - karaganda
+    exclude: []
+    weight: 10
+
+# Buying signals - patterns that indicate they need digital solutions
+signals:
+  strong_positive:  # +25 to +40 points
+    # Website needs
+    - pattern: "нужен сайт"
+      score: 40
+    - pattern: "нужна разработка"
+      score: 35
+    - pattern: "ищем разработчика"
+      score: 35
+    - pattern: "need website"
+      score: 40
+      
+    # Automation needs
+    - pattern: "автоматизация"
+      score: 35
+    - pattern: "нужна crm"
+      score: 40
+    - pattern: "хотим автоматизировать"
+      score: 40
+    - pattern: "ручные процессы"
+      score: 30
+      
+    # Digital transformation
+    - pattern: "цифровизация"
+      score: 35
+    - pattern: "оцифровать"
+      score: 30
+    - pattern: "перейти в онлайн"
+      score: 35
+      
+  moderate_positive:  # +10 to +20 points
+    - pattern: "развиваемся"
+      score: 15
+    - pattern: "расширяемся"
+      score: 15
+    - pattern: "opening new"
+      score: 15
+    - pattern: "hiring"
+      score: 10
+    - pattern: "набираем"
+      score: 10
+    - pattern: "has_instagram"
+      score: 10
+    - pattern: "has_whatsapp"
+      score: 15
+    - pattern: "has_telegram"
+      score: 15
+      
+  negative:  # Disqualifiers
+    - pattern: "не интересует"
+      score: -100
+    - pattern: "отписаться"
+      score: -100
+    - pattern: "stop"
+      score: -100
+    - pattern: "spam"
+      score: -100
+    - pattern: "уже есть подрядчик"
+      score: -50
+    - pattern: "нет бюджета"
+      score: -50
+
+# Scoring thresholds
+thresholds:
+  # Minimum score to proceed with outreach
+  qualified: 40
+  
+  # Score at which to prioritize (hot lead)
+  hot: 70
+  
+  # Below this, disqualify
+  disqualified: 0
+
+# Lead enrichment - what data to gather
+enrichment:
+  required:
+    - company_name
+    - phone  # Primary contact for KZ market
+  
+  optional:
+    - first_name
+    - email
+    - website
+    - instagram
+    - whatsapp
+    - telegram
+    - address
+    - category

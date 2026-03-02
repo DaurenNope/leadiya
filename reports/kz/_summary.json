@@ -1,0 +1,62 @@
+[
+  {
+    "leadId": "lead_1769636376486_esre6ur",
+    "company": "Easy Express",
+    "phone": "+77750409540",
+    "url": "https://www.easyexpress.kz",
+    "score": 60,
+    "issues": [
+      "Нет meta description",
+      "Не адаптирован под мобильные",
+      "Нет формы обратной связи"
+    ],
+    "message": "Добрый день.\n\nПровёл экспресс-аудит сайта https://www.easyexpress.kz\n\nРезультат: 60/100\n\nОбнаружено:\n1. Нет meta description\n2. Не адаптирован под мобильные\n3. Нет формы обратной связи\n\nПодготовил PDF-отчёт с рекомендациями. Выслать?",
+    "pdfPath": "reports/kz/Easy_Express.pdf"
+  },
+  {
+    "leadId": "lead_1769636376483_u9ysw04",
+    "company": "Mail Boxes Etc",
+    "phone": "+77018936080",
+    "url": "https://www.mbe.com.kz",
+    "score": 20,
+    "issues": [
+      "Сайт недоступен или не отвечает"
+    ],
+    "message": "Добрый день.\n\nПровёл экспресс-аудит сайта https://www.mbe.com.kz\n\nРезультат: 20/100\n\nОбнаружено:\n1. Сайт недоступен или не отвечает\n\nПодготовил PDF-отчёт с рекомендациями. Выслать?",
+    "pdfPath": "reports/kz/Mail_Boxes_Etc.pdf"
+  },
+  {
+    "leadId": "lead_1769636376575_5bk8x8g",
+    "company": "Astana Garden International School",
+    "phone": "+77012725588",
+    "url": "https://www.ags.edu.kz",
+    "score": 75,
+    "issues": [
+      "Нет заголовка H1",
+      "Нет формы обратной связи",
+      "Нет мессенджеров (WhatsApp/Telegram)"
+    ],
+    "message": "Добрый день.\n\nПровёл экспресс-аудит сайта https://www.ags.edu.kz\n\nРезультат: 75/100\n\nОбнаружено:\n1. Нет заголовка H1\n2. Нет формы обратной связи\n3. Нет мессенджеров (WhatsApp/Telegram)\n\nПодготовил PDF-отчёт с рекомендациями. Выслать?",
+    "pdfPath": "reports/kz/Astana_Garden_International_Sc.pdf"
+  },
+  {
+    "leadId": "lead_1769636376431_jnc5y77",
+    "company": "Центральноазиатский технико-экономический колледж",
+    "phone": "+77089726129",
+    "url": "https://www.catec.kz",
+    "score": 100,
+    "issues": [],
+    "message": "Добрый день.\n\nПровёл экспресс-аудит сайта https://www.catec.kz\n\nРезультат: 100/100 — хороший показатель.\n\nЕсть несколько рекомендаций:\nМелкие оптимизации\n\nПодготовил PDF-отчёт. Выслать?",
+    "pdfPath": "reports/kz/Центральноазиатский_технико_эк.pdf"
+  },
+  {
+    "leadId": "lead_1769636376501_r7l5pzn",
+    "company": "Алеко",
+    "phone": "+77272942133",
+    "url": "https://www.aleko.kz",
+    "score": 100,
+    "issues": [],
+    "message": "Добрый день.\n\nПровёл экспресс-аудит сайта https://www.aleko.kz\n\nРезультат: 100/100 — хороший показатель.\n\nЕсть несколько рекомендаций:\nМелкие оптимизации\n\nПодготовил PDF-отчёт. Выслать?",
+    "pdfPath": "reports/kz/Алеко.pdf"
+  }
+]

@@ -1,0 +1,1362 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leadiya - Lead Generation Platform</title>
+    <link rel="stylesheet" href="style.css?v=202602030610">
+    <script src="https://cdn.jsdelivr.net/npm/qrious@4.0.2/dist/qrious.min.js"></script>
+</head>
+
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>
+                    <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                    </svg>
+                    Leadiya
+                </h1>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-view="pipeline">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 3v18h18" />
+                        <path d="M18 17V9" />
+                        <path d="M13 17V5" />
+                        <path d="M8 17v-3" />
+                    </svg>
+                    <span>Pipeline</span>
+                </a>
+                <a href="#" class="nav-item" data-view="leads">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                    <span>Все лиды</span>
+                </a>
+                <a href="#" class="nav-item" data-view="sources">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+                        <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+                        <line x1="6" y1="6" x2="6.01" y2="6" />
+                        <line x1="6" y1="18" x2="6.01" y2="18" />
+                    </svg>
+                    <span>Sources</span>
+                </a>
+                <a href="#" class="nav-item" data-view="messages">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                    <span>Messages</span>
+                    <span class="nav-badge" id="nav-messages-badge" style="display: none;">0</span>
+                </a>
+                <a href="#" class="nav-item" data-view="outreach">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13" />
+                        <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                    </svg>
+                    <span>Outreach</span>
+                </a>
+                <a href="#" class="nav-item" data-view="settings">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3" />
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                    </svg>
+                    <span>Настройки</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="channel-status-mini">
+                    <span id="ch-wa" class="status-dot offline" title="WhatsApp"></span>
+                    <span id="ch-em" class="status-dot offline" title="Email"></span>
+                    <span id="ch-tg" class="status-dot offline" title="Telegram"></span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="main-header">
+                <div class="header-left">
+                    <div class="search-wrapper">
+                        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8" />
+                            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                        <input type="text" id="global-search" placeholder="Поиск по лидам..." class="global-search">
+                    </div>
+                </div>
+                <div class="header-right">
+                    <button class="btn btn-primary" id="add-lead-btn">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19" />
+                            <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                        Добавить лид
+                    </button>
+                    <a href="/api/export" class="btn btn-secondary">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                        CSV
+                    </a>
+                    <button class="btn btn-ghost" id="refresh-btn">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10" />
+                            <polyline points="1 20 1 14 7 14" />
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                        </svg>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Stats Bar -->
+            <div class="stats-bar">
+                <div class="stat-item">
+                    <span class="stat-number" id="stat-total">0</span>
+                    <span class="stat-label">Всего</span>
+                </div>
+                <div class="stat-item discovered">
+                    <span class="stat-number" id="stat-discovered">0</span>
+                    <span class="stat-label">Новые</span>
+                </div>
+                <div class="stat-item contacted">
+                    <span class="stat-number" id="stat-contacted">0</span>
+                    <span class="stat-label">В работе</span>
+                </div>
+                <div class="stat-item qualified">
+                    <span class="stat-number" id="stat-qualified">0</span>
+                    <span class="stat-label">Квалиф.</span>
+                </div>
+                <div class="stat-item won">
+                    <span class="stat-number" id="stat-won">0</span>
+                    <span class="stat-label">Закрыты</span>
+                </div>
+                <div class="stat-item" style="border-left: 2px solid rgba(99,102,241,0.3)">
+                    <span class="stat-number" id="stat-research" style="color: #6366f1">0</span>
+                    <span class="stat-label">🔍 Research</span>
+                </div>
+            </div>
+
+            <!-- Pipeline View -->
+            <div id="pipeline-view" class="view active">
+                <div class="pipeline-container">
+                    <div class="pipeline-column" data-state="discovered">
+                        <div class="column-header">
+                            <span class="column-title">
+                                <svg class="column-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <circle cx="12" cy="12" r="10" />
+                                    <line x1="12" y1="8" x2="12" y2="12" />
+                                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                                </svg>
+                                Новые
+                            </span>
+                            <span class="column-count" id="col-discovered">0</span>
+                        </div>
+                        <div class="column-cards" id="cards-discovered"></div>
+                    </div>
+                    <div class="pipeline-column" data-state="contacted">
+                        <div class="column-header">
+                            <span class="column-title">
+                                <svg class="column-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path
+                                        d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+                                </svg>
+                                В работе
+                            </span>
+                            <span class="column-count" id="col-contacted">0</span>
+                        </div>
+                        <div class="column-cards" id="cards-contacted"></div>
+                    </div>
+                    <div class="pipeline-column" data-state="qualified">
+                        <div class="column-header">
+                            <span class="column-title">
+                                <svg class="column-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                                Квалифицированные
+                            </span>
+                            <span class="column-count" id="col-qualified">0</span>
+                        </div>
+                        <div class="column-cards" id="cards-qualified"></div>
+                    </div>
+                    <div class="pipeline-column" data-state="meeting_booked">
+                        <div class="column-header">
+                            <span class="column-title">
+                                <svg class="column-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                                    <line x1="16" y1="2" x2="16" y2="6" />
+                                    <line x1="8" y1="2" x2="8" y2="6" />
+                                    <line x1="3" y1="10" x2="21" y2="10" />
+                                </svg>
+                                Встречи
+                            </span>
+                            <span class="column-count" id="col-meeting">0</span>
+                        </div>
+                        <div class="column-cards" id="cards-meeting"></div>
+                    </div>
+                    <div class="pipeline-column" data-state="closed_won">
+                        <div class="column-header">
+                            <span class="column-title">
+                                <svg class="column-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <circle cx="12" cy="8" r="7" />
+                                    <polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88" />
+                                </svg>
+                                Закрыты
+                            </span>
+                            <span class="column-count" id="col-won">0</span>
+                        </div>
+                        <div class="column-cards" id="cards-won"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Leads List View -->
+            <div id="leads-view" class="view">
+                <div class="filters-bar">
+                    <select id="filter-state" class="filter-select">
+                        <option value="all">Все статусы</option>
+                        <option value="discovered">Новые</option>
+                        <option value="contacted">В работе</option>
+                        <option value="qualified">Квалифицированные</option>
+                        <option value="meeting_booked">Встречи</option>
+                        <option value="closed_won">Закрыты</option>
+                        <option value="closed_lost">Потеряны</option>
+                    </select>
+                    <select id="filter-source" class="filter-select">
+                        <option value="all">Все источники</option>
+                        <option value="scrape">Scrape</option>
+                        <option value="extension">Extension</option>
+                        <option value="apollo">Apollo</option>
+                        <option value="manual">Вручную</option>
+                    </select>
+                    <select id="filter-region" class="filter-select">
+                        <option value="all">Все регионы</option>
+                        <option value="US">США</option>
+                        <option value="KZ">Казахстан</option>
+                        <option value="RU">Россия</option>
+                        <option value="CO">Colorado</option>
+                        <option value="CA">California</option>
+                        <option value="TX">Texas</option>
+                        <option value="NY">New York</option>
+                    </select>
+                    <select id="filter-contact" class="filter-select">
+                        <option value="all">Все контакты</option>
+                        <option value="has_phone">С телефоном</option>
+                        <option value="has_email">С email</option>
+                        <option value="has_contact">С любым контактом</option>
+                        <option value="no_contact">Без контактов</option>
+                    </select>
+                </div>
+                <div class="leads-table-container">
+                    <table class="leads-table">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="select-all"></th>
+                                <th>Компания</th>
+                                <th>Контакт</th>
+                                <th>Телефон</th>
+                                <th>Email</th>
+                                <th>Источник</th>
+                                <th>Статус</th>
+                                <th>Последний контакт</th>
+                                <th>Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leads-tbody"></tbody>
+                    </table>
+                </div>
+                <div class="bulk-actions hidden" id="bulk-actions">
+                    <span id="selected-count">0 выбрано</span>
+                    <select id="bulk-state" class="filter-select">
+                        <option value="">Изменить статус...</option>
+                        <option value="contacted">В работе</option>
+                        <option value="qualified">Квалифицированный</option>
+                        <option value="closed_lost">Потерян</option>
+                    </select>
+                    <button class="btn btn-primary" id="bulk-apply">Применить</button>
+                    <input type="text" id="bulk-tag-input" class="filter-select" placeholder="Добавить тег..."
+                        style="width: 150px;">
+                    <button class="btn btn-secondary" id="bulk-tag-btn">+Тег</button>
+                    <button class="btn btn-danger" id="bulk-delete">Удалить</button>
+                </div>
+            </div>
+
+            <!-- Sources View -->
+            <div id="sources-view" class="view">
+                <div class="sources-header">
+                    <h2>
+                        <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+                            <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+                            <line x1="6" y1="6" x2="6.01" y2="6" />
+                            <line x1="6" y1="18" x2="6.01" y2="18" />
+                        </svg>
+                        Lead Sources
+                    </h2>
+                    <button class="btn btn-primary" id="add-source-btn">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19" />
+                            <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                        Add Source
+                    </button>
+                </div>
+                <div class="sources-grid" id="sources-grid">
+                    <!-- Source cards will be rendered here -->
+                </div>
+            </div>
+
+            <!-- Messages View (Full-screen WhatsApp Inbox) -->
+            <div id="messages-view" class="view">
+                <div class="messages-container">
+                    <!-- Conversations Sidebar -->
+                    <div class="msg-sidebar">
+                        <div class="msg-sidebar-header">
+                            <h2>Messages</h2>
+                            <div class="msg-header-actions">
+                                <div class="msg-status">
+                                    <span class="status-dot" id="msg-conn-dot"></span>
+                                    <span id="msg-conn-text">Disconnected</span>
+                                </div>
+                                <button class="btn btn-sm btn-primary" id="msg-new-btn" title="New Message">+
+                                    New</button>
+                                <button class="btn btn-sm btn-success" id="msg-connect-btn">Connect</button>
+                            </div>
+                        </div>
+                        <div class="msg-search">
+                            <input type="text" placeholder="Search conversations..." id="msg-search-input">
+                        </div>
+                        <div class="msg-conversation-list" id="msg-conversation-list">
+                            <!-- Conversations rendered here -->
+                            <div class="msg-empty-state">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                                </svg>
+                                <p>No conversations yet</p>
+                                <small>Click Connect above to link WhatsApp</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Chat Area -->
+                    <div class="msg-chat-area" id="msg-chat-area">
+                        <div class="msg-chat-header" id="msg-chat-header" style="display: none;">
+                            <div class="msg-contact-info">
+                                <div class="msg-avatar" id="msg-avatar">?</div>
+                                <div class="msg-contact-details">
+                                    <span class="msg-contact-name" id="msg-contact-name">Select a conversation</span>
+                                    <span class="msg-contact-phone" id="msg-contact-phone"></span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="msg-chat-messages" id="msg-chat-messages">
+                            <div class="msg-select-prompt">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                                </svg>
+                                <p>Select a conversation to view messages</p>
+                            </div>
+                        </div>
+                        <div class="msg-chat-input" id="msg-chat-input" style="display: none;">
+                            <button class="btn-icon" id="msg-template-btn" title="Use template">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20"
+                                    height="20">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                    <polyline points="14 2 14 8 20 8" />
+                                    <line x1="16" y1="13" x2="8" y2="13" />
+                                    <line x1="16" y1="17" x2="8" y2="17" />
+                                    <polyline points="10 9 9 9 8 9" />
+                                </svg>
+                            </button>
+                            <button class="btn-icon" id="msg-attach-btn" title="Attach file">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20"
+                                    height="20">
+                                    <path
+                                        d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                                </svg>
+                            </button>
+                            <input type="file" id="msg-file-input" accept="image/*,.pdf,.doc,.docx"
+                                style="display: none;">
+                            <div class="msg-template-picker" id="msg-template-picker" style="display: none;">
+                                <div class="template-picker-header">
+                                    <span>📋 Шаблоны</span>
+                                    <button class="btn-close" id="msg-template-close">&times;</button>
+                                </div>
+                                <div class="template-picker-list" id="msg-template-list">
+                                    <!-- Templates loaded dynamically -->
+                                </div>
+                            </div>
+                            <div class="msg-attachment-preview" id="msg-attachment-preview" style="display: none;">
+                                <span class="attachment-name" id="attachment-name"></span>
+                                <button class="btn-close" id="attachment-remove">&times;</button>
+                            </div>
+                            <input type="text" placeholder="Type a message..." id="msg-input-field">
+                            <button class="btn btn-primary" id="msg-send-btn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="22" y1="2" x2="11" y2="13" />
+                                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Outreach View -->
+            <div id="outreach-view" class="view">
+                <!-- Automation Control Panel - Full Width -->
+                <div class="automation-control-wrapper">
+                    <div class="automation-control">
+                        <div class="automation-header">
+                            <h3>
+                                <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <rect x="3" y="11" width="18" height="10" rx="2" />
+                                    <circle cx="12" cy="5" r="3" />
+                                    <path d="M12 8v3" />
+                                </svg>
+                                Automation Engine
+                            </h3>
+                            <div class="automation-status-badge" id="auto-badge">
+                                <span class="status-dot" id="auto-status-dot"></span>
+                                <span id="auto-badge-text">Stopped</span>
+                            </div>
+                        </div>
+
+                        <div class="automation-grid">
+                            <!-- Left: Status & Controls -->
+                            <div class="automation-left">
+                                <div class="automation-stats-row">
+                                    <div class="auto-stat">
+                                        <span class="auto-stat-value" id="auto-today-count">0</span>
+                                        <span class="auto-stat-label">Contacted Today</span>
+                                    </div>
+                                    <div class="auto-stat">
+                                        <span class="auto-stat-value" id="auto-cycle-count">0</span>
+                                        <span class="auto-stat-label">Cycles Run</span>
+                                    </div>
+                                    <div class="auto-stat">
+                                        <span class="auto-stat-value" id="auto-limit">50</span>
+                                        <span class="auto-stat-label">Daily Limit</span>
+                                    </div>
+                                    <div class="auto-stat">
+                                        <span class="auto-stat-value" id="auto-interval">60m</span>
+                                        <span class="auto-stat-label">Interval</span>
+                                    </div>
+                                </div>
+
+                                <div class="automation-buttons">
+                                    <button class="btn btn-primary btn-lg" id="run-cycle-btn">
+                                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                            stroke-width="2">
+                                            <polygon points="5 3 19 12 5 21 5 3" />
+                                        </svg>
+                                        <span class="btn-text">Run Cycle</span>
+                                    </button>
+                                    <button class="btn btn-success" id="start-auto-btn">
+                                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                            stroke-width="2">
+                                            <polyline points="23 4 23 10 17 10" />
+                                            <polyline points="1 20 1 14 7 14" />
+                                            <path
+                                                d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                                        </svg>
+                                        <span class="btn-text">Start</span>
+                                    </button>
+                                    <button class="btn btn-danger" id="stop-auto-btn" disabled>
+                                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                            stroke-width="2">
+                                            <rect x="6" y="6" width="12" height="12" rx="2" />
+                                        </svg>
+                                        <span class="btn-text">Stop</span>
+                                    </button>
+                                </div>
+
+                                <!-- Last Cycle Summary -->
+                                <div id="last-cycle-result" class="cycle-result hidden">
+                                    <div class="cycle-result-header">Last Cycle Result:</div>
+                                    <div class="cycle-result-stats">
+                                        <span class="cycle-stat discovered"><span id="cycle-discovered">0</span>
+                                            discovered</span>
+                                        <span class="cycle-arrow">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                width="16" height="16">
+                                                <line x1="5" y1="12" x2="19" y2="12" />
+                                                <polyline points="12 5 19 12 12 19" />
+                                            </svg>
+                                        </span>
+                                        <span class="cycle-stat qualified"><span id="cycle-qualified">0</span>
+                                            qualified</span>
+                                        <span class="cycle-arrow">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                                width="16" height="16">
+                                                <line x1="5" y1="12" x2="19" y2="12" />
+                                                <polyline points="12 5 19 12 12 19" />
+                                            </svg>
+                                        </span>
+                                        <span class="cycle-stat contacted"><span id="cycle-contacted">0</span>
+                                            contacted</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Right: Activity Log -->
+                            <div class="automation-right">
+                                <div class="automation-log-header">
+                                    <span>
+                                        <svg class="section-icon-sm" viewBox="0 0 24 24" fill="none"
+                                            stroke="currentColor" stroke-width="2">
+                                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                            <polyline points="14 2 14 8 20 8" />
+                                            <line x1="16" y1="13" x2="8" y2="13" />
+                                            <line x1="16" y1="17" x2="8" y2="17" />
+                                            <polyline points="10 9 9 9 8 9" />
+                                        </svg>
+                                        Activity Log
+                                    </span>
+                                    <button class="btn btn-ghost btn-sm" id="clear-log-btn">Clear</button>
+                                </div>
+                                <div class="automation-log" id="automation-log">
+                                    <div class="log-entry log-info">System ready. Click "Run Cycle" to start.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Templates & Sequences Panel -->
+                <div class="templates-sequences-panel">
+                    <div class="templates-section">
+                        <div class="section-header">
+                            <h3>
+                                <svg class="section-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                    <polyline points="14 2 14 8 20 8" />
+                                </svg>
+                                Message Templates
+                            </h3>
+                            <button class="btn btn-sm btn-primary" id="add-template-btn">+ New</button>
+                        </div>
+                        <div class="templates-list" id="auto-templates-list">
+                            <div class="template-empty">Loading templates...</div>
+                        </div>
+                    </div>
+
+                    <div class="sequences-section">
+                        <div class="section-header">
+                            <h3>
+                                <svg class="section-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10" />
+                                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                                </svg>
+                                Active Sequence
+                            </h3>
+                        </div>
+                        <div class="sequence-selector">
+                            <select id="active-sequence" class="form-select">
+                                <option value="cold_outreach">Cold Outreach (Default)</option>
+                                <option value="follow_up">Follow-up Sequence</option>
+                                <option value="re_engage">Re-engagement</option>
+                            </select>
+                        </div>
+                        <div class="sequence-steps" id="sequence-steps">
+                            <div class="sequence-step">
+                                <span class="step-num">1</span>
+                                <span class="step-desc">Initial message via WhatsApp</span>
+                                <span class="step-delay">Immediate</span>
+                            </div>
+                            <div class="sequence-step">
+                                <span class="step-num">2</span>
+                                <span class="step-desc">Follow-up if no response</span>
+                                <span class="step-delay">+24h</span>
+                            </div>
+                            <div class="sequence-step">
+                                <span class="step-num">3</span>
+                                <span class="step-desc">Final reminder</span>
+                                <span class="step-delay">+72h</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="outreach-panel">
+                    <div class="outreach-queue">
+                        <h3>
+                            <svg class="section-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <line x1="8" y1="6" x2="21" y2="6" />
+                                <line x1="8" y1="12" x2="21" y2="12" />
+                                <line x1="8" y1="18" x2="21" y2="18" />
+                                <line x1="3" y1="6" x2="3.01" y2="6" />
+                                <line x1="3" y1="12" x2="3.01" y2="12" />
+                                <line x1="3" y1="18" x2="3.01" y2="18" />
+                            </svg>
+                            Очередь на outreach
+                        </h3>
+                        <div id="outreach-queue-list"></div>
+                    </div>
+                    <div class="outreach-stats">
+                        <h3>
+                            <svg class="section-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <line x1="18" y1="20" x2="18" y2="10" />
+                                <line x1="12" y1="20" x2="12" y2="4" />
+                                <line x1="6" y1="20" x2="6" y2="14" />
+                            </svg>
+                            Статистика
+                        </h3>
+                        <div class="outreach-stat">
+                            <span class="label">Отправлено сегодня</span>
+                            <span class="value" id="sent-today">0</span>
+                        </div>
+                        <div class="outreach-stat">
+                            <span class="label">Ответили</span>
+                            <span class="value" id="replied-today">0</span>
+                        </div>
+                        <div class="outreach-stat">
+                            <span class="label">Ожидают ответа</span>
+                            <span class="value" id="pending-reply">0</span>
+                        </div>
+                        <button class="btn btn-primary btn-lg" id="process-outreach">
+                            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <line x1="22" y1="2" x2="11" y2="13" />
+                                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                            </svg>
+                            Запустить outreach
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings View -->
+            <div id="settings-view" class="view">
+                <div class="settings-panel">
+                    <h2>
+                        <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <circle cx="12" cy="12" r="3" />
+                            <path
+                                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                        </svg>
+                        Настройки каналов
+                    </h2>
+                    <div class="settings-section">
+                        <h3>
+                            <svg class="section-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path
+                                    d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+                            </svg>
+                            WhatsApp
+                        </h3>
+                        <p class="settings-status" id="settings-wa-status">
+                            <span class="status-indicator offline" id="settings-wa-dot"></span>
+                            <span id="settings-wa-text">Загрузка...</span>
+                        </p>
+                        <div class="settings-form">
+                            <button class="btn btn-success" id="settings-wa-connect">Подключить WhatsApp</button>
+                            <button class="btn btn-danger hidden" id="settings-wa-disconnect">Отключить</button>
+                        </div>
+                        <p class="settings-hint">Сканируйте QR-код с телефона для подключения</p>
+                    </div>
+                    <div class="settings-section">
+                        <h3>
+                            <svg class="section-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                                <polyline points="22,6 12,13 2,6" />
+                            </svg>
+                            Email (SMTP)
+                        </h3>
+                        <p class="settings-status" id="email-status">
+                            <span class="status-indicator offline"></span>
+                            Не настроен
+                        </p>
+                        <div class="settings-form">
+                            <input type="text" placeholder="SMTP Host" id="smtp-host">
+                            <input type="text" placeholder="SMTP User" id="smtp-user">
+                            <input type="password" placeholder="SMTP Password" id="smtp-pass">
+                            <button class="btn btn-primary">Сохранить</button>
+                        </div>
+                    </div>
+                    <div class="settings-section">
+                        <h3>
+                            <svg class="section-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <line x1="22" y1="2" x2="11" y2="13" />
+                                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                            </svg>
+                            Telegram
+                        </h3>
+                        <p class="settings-status" id="tg-status">
+                            <span class="status-indicator offline"></span>
+                            Не подключен
+                        </p>
+                        <div class="settings-form">
+                            <input type="text" placeholder="Bot Token" id="tg-token">
+                            <button class="btn btn-primary">Подключить</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Lead Detail Drawer -->
+    <div id="lead-drawer" class="drawer hidden">
+        <div class="drawer-content">
+            <div class="drawer-header">
+                <h2 id="drawer-title">Детали лида</h2>
+                <button class="drawer-close" id="drawer-close">&times;</button>
+            </div>
+            <div class="drawer-tabs">
+                <button class="tab active" data-tab="info">
+                    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="16" x2="12" y2="12" />
+                        <line x1="12" y1="8" x2="12.01" y2="8" />
+                    </svg>
+                    Информация
+                </button>
+                <button class="tab" data-tab="activity">
+                    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                        <line x1="16" y1="2" x2="16" y2="6" />
+                        <line x1="8" y1="2" x2="8" y2="6" />
+                        <line x1="3" y1="10" x2="21" y2="10" />
+                    </svg>
+                    История
+                </button>
+                <button class="tab" data-tab="notes">
+                    <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                    Заметки
+                </button>
+            </div>
+            <div class="drawer-body">
+                <div id="tab-info" class="tab-content active">
+                    <form id="lead-form">
+                        <div class="form-group">
+                            <label>Компания</label>
+                            <input type="text" id="edit-company" class="form-input">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Имя</label>
+                                <input type="text" id="edit-firstname" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label>Фамилия</label>
+                                <input type="text" id="edit-lastname" class="form-input">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Email</label>
+                            <input type="email" id="edit-email" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label>Телефон</label>
+                            <input type="tel" id="edit-phone" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label>WhatsApp</label>
+                            <input type="tel" id="edit-whatsapp" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label>Сайт</label>
+                            <input type="url" id="edit-website" class="form-input">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Instagram</label>
+                                <input type="text" id="edit-instagram" class="form-input" placeholder="@username">
+                            </div>
+                            <div class="form-group">
+                                <label>Telegram</label>
+                                <input type="text" id="edit-telegram" class="form-input" placeholder="@channel">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Facebook</label>
+                            <input type="url" id="edit-facebook" class="form-input" placeholder="facebook.com/...">
+                        </div>
+                        <div class="form-group">
+                            <label>Статус</label>
+                            <select id="edit-state" class="form-input">
+                                <option value="discovered">Новый</option>
+                                <option value="contacted">В работе</option>
+                                <option value="qualified">Квалифицированный</option>
+                                <option value="meeting_booked">Встреча</option>
+                                <option value="closed_won">Закрыт</option>
+                                <option value="closed_lost">Потерян</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Теги</label>
+                            <input type="text" id="edit-tags" class="form-input" placeholder="tag1, tag2">
+                        </div>
+                    </form>
+                </div>
+                <div id="tab-activity" class="tab-content">
+                    <div id="activity-list" class="activity-list"></div>
+                </div>
+                <div id="tab-notes" class="tab-content">
+                    <div id="notes-list" class="notes-list"></div>
+                    <div class="add-note-form">
+                        <textarea id="new-note" placeholder="Добавить заметку..."></textarea>
+                        <button class="btn btn-primary" id="add-note-btn">Добавить</button>
+                    </div>
+                </div>
+            </div>
+            <div class="drawer-footer">
+                <button class="btn btn-primary" id="save-lead-btn">
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                        <polyline points="17 21 17 13 7 13 7 21" />
+                        <polyline points="7 3 7 8 15 8" />
+                    </svg>
+                    Сохранить
+                </button>
+                <button class="btn btn-success" id="send-msg-btn">
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13" />
+                        <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                    </svg>
+                    Отправить
+                </button>
+                <button class="btn btn-danger" id="delete-lead-btn">
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    </svg>
+                    Удалить
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Lead Modal -->
+    <div id="add-lead-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Добавить лид</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="add-lead-form">
+                    <div class="form-group">
+                        <label>Компания *</label>
+                        <input type="text" id="new-company" class="form-input" required>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Имя</label>
+                            <input type="text" id="new-firstname" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label>Фамилия</label>
+                            <input type="text" id="new-lastname" class="form-input">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" id="new-email" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label>Телефон</label>
+                        <input type="tel" id="new-phone" class="form-input">
+                    </div>
+                    <div class="form-group">
+                        <label>Сайт</label>
+                        <input type="url" id="new-website" class="form-input">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancel-add">Отмена</button>
+                <button class="btn btn-primary" id="submit-add">Добавить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Source Modal -->
+    <div id="add-source-modal" class="modal hidden">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h2>
+                    <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+                        <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+                        <line x1="6" y1="6" x2="6.01" y2="6" />
+                        <line x1="6" y1="18" x2="6.01" y2="18" />
+                    </svg>
+                    Add Lead Source
+                </h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="add-source-form">
+                    <div class="form-group">
+                        <label>Source Name *</label>
+                        <input type="text" id="source-name" class="form-input" placeholder="e.g., Almaty Wholesale"
+                            required>
+                    </div>
+                    <div class="form-group">
+                        <label>Source Type *</label>
+                        <select id="source-type" class="form-input" required>
+                            <option value="">-- Select Type --</option>
+                            <option value="directory">Directory (2GIS, Yelp, Google Maps)</option>
+                            <option value="telegram">Telegram Group</option>
+                            <option value="website">Website (Custom Scraper)</option>
+                            <option value="api">API (Apollo, Instantly)</option>
+                            <option value="import">Import (CSV/JSON)</option>
+                        </select>
+                    </div>
+
+                    <!-- Popular Presets -->
+                    <div class="form-group">
+                        <label>Quick Presets <small>(click to auto-fill)</small></label>
+                        <div class="preset-grid">
+                            <!-- CIS MARKET -->
+                            <button type="button" class="preset-btn" data-preset="2gis_almaty">
+                                <span class="preset-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                                        <polyline points="9 22 9 12 15 12 15 22" />
+                                    </svg>
+                                </span>
+                                <span class="preset-name">2GIS Almaty</span>
+                                <span class="preset-desc">B2B Companies</span>
+                            </button>
+                            <button type="button" class="preset-btn" data-preset="rusprofile">
+                                <span class="preset-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                        <polyline points="14 2 14 8 20 8" />
+                                        <line x1="16" y1="13" x2="8" y2="13" />
+                                        <line x1="16" y1="17" x2="8" y2="17" />
+                                    </svg>
+                                </span>
+                                <span class="preset-name">Rusprofile</span>
+                                <span class="preset-desc">RU Companies</span>
+                            </button>
+                            <button type="button" class="preset-btn" data-preset="vcru">
+                                <span class="preset-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                                        <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15z" />
+                                    </svg>
+                                </span>
+                                <span class="preset-name">VC.ru</span>
+                                <span class="preset-desc">RU Startups</span>
+                            </button>
+                            <button type="button" class="preset-btn" data-preset="habr">
+                                <span class="preset-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="16 18 22 12 16 6" />
+                                        <polyline points="8 6 2 12 8 18" />
+                                    </svg>
+                                </span>
+                                <span class="preset-name">Habr</span>
+                                <span class="preset-desc">Tech Companies</span>
+                            </button>
+                            <!-- GLOBAL -->
+                            <button type="button" class="preset-btn" data-preset="crunchbase">
+                                <span class="preset-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <line x1="12" y1="1" x2="12" y2="23" />
+                                        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                                    </svg>
+                                </span>
+                                <span class="preset-name">Crunchbase</span>
+                                <span class="preset-desc">Funded Startups</span>
+                            </button>
+                            <button type="button" class="preset-btn" data-preset="clutch">
+                                <span class="preset-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polygon
+                                            points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                                    </svg>
+                                </span>
+                                <span class="preset-name">Clutch.co</span>
+                                <span class="preset-desc">Dev Agencies</span>
+                            </button>
+                            <button type="button" class="preset-btn" data-preset="apollo">
+                                <span class="preset-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                                    </svg>
+                                </span>
+                                <span class="preset-name">Apollo.io</span>
+                                <span class="preset-desc">B2B Contacts</span>
+                            </button>
+                            <button type="button" class="preset-btn" data-preset="producthunt">
+                                <span class="preset-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                                    </svg>
+                                </span>
+                                <span class="preset-name">ProductHunt</span>
+                                <span class="preset-desc">New Products</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Directory Config -->
+                    <div id="config-directory" class="source-config hidden">
+                        <div class="form-group">
+                            <label>Service</label>
+                            <select id="dir-service" class="form-input">
+                                <option value="2gis">2GIS</option>
+                                <option value="google">Google Maps</option>
+                                <option value="yelp">Yelp</option>
+                            </select>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>City</label>
+                                <input type="text" id="dir-city" class="form-input" placeholder="Almaty">
+                            </div>
+                            <div class="form-group">
+                                <label>Category/Query</label>
+                                <input type="text" id="dir-category" class="form-input" placeholder="Оптовые компании">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Telegram Config -->
+                    <div id="config-telegram" class="source-config hidden">
+                        <div class="form-group">
+                            <label>Group Username (without @)</label>
+                            <input type="text" id="tg-group" class="form-input" placeholder="startupoftheday">
+                        </div>
+                    </div>
+
+                    <!-- Website Config -->
+                    <div id="config-website" class="source-config hidden">
+                        <div class="form-group">
+                            <label>Target URL</label>
+                            <input type="url" id="web-url" class="form-input"
+                                placeholder="https://example.com/directory">
+                        </div>
+                        <div class="form-group">
+                            <label>Item Selector (CSS)</label>
+                            <input type="text" id="web-selector" class="form-input" placeholder=".company-card">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Name Selector</label>
+                                <input type="text" id="web-name" class="form-input" placeholder=".company-name">
+                            </div>
+                            <div class="form-group">
+                                <label>Phone Selector</label>
+                                <input type="text" id="web-phone" class="form-input" placeholder=".phone">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- API Config -->
+                    <div id="config-api" class="source-config hidden">
+                        <div class="form-group">
+                            <label>API Provider</label>
+                            <select id="api-provider" class="form-input">
+                                <option value="apollo">Apollo.io</option>
+                                <option value="instantly">Instantly.ai</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>API Key</label>
+                            <input type="password" id="api-key" class="form-input" placeholder="Enter API key">
+                        </div>
+                        <div class="form-group">
+                            <label>Search Query / Filters</label>
+                            <input type="text" id="api-query" class="form-input"
+                                placeholder="industry:tech, location:US">
+                        </div>
+                    </div>
+
+                    <!-- Import Config -->
+                    <div id="config-import" class="source-config hidden">
+                        <div class="form-group">
+                            <label>Upload File (CSV or JSON)</label>
+                            <input type="file" id="import-file" class="form-input" accept=".csv,.json">
+                        </div>
+                        <div class="form-group">
+                            <label>Field Mapping (optional)</label>
+                            <textarea id="import-mapping" class="form-input" rows="3"
+                                placeholder='{"name": "company_name", "phone": "tel"}'></textarea>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancel-source">Cancel</button>
+                <button class="btn btn-primary" id="submit-source">Add Source</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lead Detail Slide-Out Panel -->
+    <div id="lead-detail-panel" class="slide-panel hidden">
+        <div class="slide-panel-header">
+            <h3 id="lead-detail-name">Lead Name</h3>
+            <button class="btn btn-ghost" id="close-lead-detail">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+            </button>
+        </div>
+        <div class="slide-panel-body">
+            <!-- Quick Actions at Top -->
+            <div class="lead-detail-section">
+                <div class="quick-actions" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <button class="btn btn-primary" id="lead-send-message">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                        </svg>
+                        WhatsApp
+                    </button>
+                    <button class="btn btn-secondary" id="lead-call-btn">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path
+                                d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+                        </svg>
+                        Call
+                    </button>
+                    <button class="btn btn-secondary" id="lead-email-btn">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                            <polyline points="22,6 12,13 2,6" />
+                        </svg>
+                        Email
+                    </button>
+                    <button class="btn btn-secondary" id="lead-enrich-btn">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8" />
+                            <path d="M21 21l-4.35-4.35" />
+                            <path d="M11 8v6" />
+                            <path d="M8 11h6" />
+                        </svg>
+                        Enrich
+                    </button>
+                    <button class="btn btn-secondary" id="lead-start-sequence">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3" />
+                        </svg>
+                        Sequence
+                    </button>
+                </div>
+            </div>
+
+            <!-- Edit Form -->
+            <div class="lead-detail-section">
+                <h4>Lead Information</h4>
+                <form id="lead-detail-form">
+                    <div class="form-group">
+                        <label>Company</label>
+                        <input type="text" id="detail-company" class="form-input" placeholder="Company name">
+                    </div>
+                    <div class="form-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                        <div class="form-group">
+                            <label>First Name</label>
+                            <input type="text" id="detail-firstname" class="form-input" placeholder="First name">
+                        </div>
+                        <div class="form-group">
+                            <label>Last Name</label>
+                            <input type="text" id="detail-lastname" class="form-input" placeholder="Last name">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" id="detail-email" class="form-input" placeholder="email@example.com">
+                    </div>
+                    <div class="form-group">
+                        <label>Phone</label>
+                        <input type="tel" id="detail-phone" class="form-input" placeholder="+7 XXX XXX XXXX">
+                    </div>
+                    <div class="form-group">
+                        <label>WhatsApp</label>
+                        <input type="tel" id="detail-whatsapp" class="form-input" placeholder="+7 XXX XXX XXXX">
+                    </div>
+                    <div class="form-group">
+                        <label>Website</label>
+                        <input type="url" id="detail-website" class="form-input" placeholder="https://example.com">
+                    </div>
+                    <div class="form-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                        <div class="form-group">
+                            <label>Instagram</label>
+                            <input type="text" id="detail-instagram" class="form-input" placeholder="@username">
+                        </div>
+                        <div class="form-group">
+                            <label>Telegram</label>
+                            <input type="text" id="detail-telegram" class="form-input" placeholder="@channel">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Facebook</label>
+                        <input type="url" id="detail-facebook" class="form-input" placeholder="facebook.com/...">
+                    </div>
+                </form>
+            </div>
+
+            <!-- Status -->
+            <div class="lead-detail-section">
+                <h4>Status</h4>
+                <select id="lead-detail-state" class="form-input">
+                    <option value="discovered">Discovered</option>
+                    <option value="contacted">Contacted</option>
+                    <option value="qualified">Qualified</option>
+                    <option value="meeting_booked">Meeting Booked</option>
+                    <option value="closed_won">Closed Won</option>
+                    <option value="closed_lost">Closed Lost</option>
+                </select>
+            </div>
+
+            <!-- Tags -->
+            <div class="lead-detail-section">
+                <h4>Tags</h4>
+                <div id="lead-detail-tags" class="tag-list"></div>
+                <div class="tag-add-row">
+                    <input type="text" id="lead-add-tag-input" class="form-input" placeholder="Add tag...">
+                    <button class="btn btn-sm btn-secondary" id="lead-add-tag-btn">+</button>
+                </div>
+            </div>
+
+            <!-- Notes -->
+            <div class="lead-detail-section">
+                <h4>Notes</h4>
+                <div id="lead-detail-notes" class="notes-list"></div>
+                <textarea id="lead-add-note" class="form-input" rows="2" placeholder="Add a note..."></textarea>
+            </div>
+
+            <!-- Activity History -->
+            <div class="lead-detail-section">
+                <h4>Activity History</h4>
+                <div id="lead-activity-history" class="activity-timeline"></div>
+            </div>
+
+            <!-- Save Button -->
+            <div class="lead-detail-section"
+                style="position: sticky; bottom: 0; background: var(--bg-primary); padding: 1rem 0; border-top: 1px solid var(--border);">
+                <button class="btn btn-primary" id="save-lead-detail" style="width: 100%;">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Run Scraper Modal -->
+    <div id="run-scraper-modal" class="modal hidden">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h2 id="run-scraper-title">Run Scraper</h2>
+                <button class="modal-close" id="close-run-scraper">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="run-scraper-form">
+                    <div id="scraper-params-container"></div>
+                </form>
+                <div id="scraper-output-container" class="hidden">
+                    <h4>Output</h4>
+                    <pre id="scraper-output" class="scraper-output"></pre>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancel-scraper">Cancel</button>
+                <button class="btn btn-danger hidden" id="stop-scraper">Stop</button>
+                <button class="btn btn-primary" id="start-scraper">
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="5 3 19 12 5 21 5 3" />
+                    </svg>
+                    Run Scraper
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- WhatsApp QR Code Modal -->
+    <div id="qr-modal" class="modal hidden">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h2>Connect WhatsApp</h2>
+                <button class="modal-close" id="close-qr-modal">&times;</button>
+            </div>
+            <div class="modal-body" style="text-align: center;">
+                <div id="qr-loading" style="padding: 2rem;">
+                    <p>Starting WhatsApp connection...</p>
+                    <p style="color: var(--text-muted); font-size: 0.875rem;">QR code will appear shortly</p>
+                </div>
+                <div id="qr-display" class="hidden" style="padding: 1rem;">
+                    <div id="qr-code"
+                        style="background: white; padding: 1rem; display: inline-block; border-radius: 8px;"></div>
+                    <p style="margin-top: 1rem; color: var(--text-secondary);">Scan with WhatsApp on your phone</p>
+                    <p style="font-size: 0.75rem; color: var(--text-muted);">Settings → Linked Devices → Link a Device
+                    </p>
+                </div>
+                <div id="qr-connected" class="hidden" style="padding: 2rem;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" width="48" height="48"
+                        style="margin: 0 auto 1rem;">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                        <polyline points="22 4 12 14.01 9 11.01" />
+                    </svg>
+                    <p style="color: var(--success); font-weight: 600;">Connected!</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Message Modal -->
+    <div id="new-msg-modal" class="modal hidden">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h2>New Message</h2>
+                <button class="modal-close" id="close-new-msg-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="new-msg-phone">Phone Number</label>
+                    <input type="text" id="new-msg-phone" class="input" placeholder="+7 XXX XXX XXXX"
+                        style="width: 100%; margin-bottom: 1rem;">
+                </div>
+                <div class="form-group">
+                    <label for="new-msg-text">Message</label>
+                    <textarea id="new-msg-text" class="input" rows="4" placeholder="Type your message..."
+                        style="width: 100%; resize: vertical;"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; gap: 0.5rem; justify-content: flex-end; padding: 1rem;">
+                <button class="btn btn-secondary" id="cancel-new-msg">Cancel</button>
+                <button class="btn btn-primary" id="send-new-msg">Send Message</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            width: 320px;
+            padding: 16px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #fff;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #3b82f6;
+        }
+
+        .status {
+            padding: 12px;
+            border-radius: 8px;
+            background: #1a1a1a;
+            margin-bottom: 12px;
+            font-size: 13px;
+            color: #888;
+        }
+
+        .status.success {
+            background: #052e16;
+            color: #22c55e;
+        }
+
+        .status.error {
+            background: #2c0a0a;
+            color: #ef4444;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 12px 16px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 8px;
+        }
+
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+
+        .btn-primary:disabled {
+            background: #1e40af;
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #222;
+            color: #fff;
+            border: 1px solid #333;
+        }
+
+        .btn-secondary:hover {
+            border-color: #3b82f6;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .capture-all-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .capture-all-row .btn {
+            flex: 1;
+            margin-bottom: 0;
+        }
+
+        .max-pages-input {
+            width: 56px;
+            padding: 10px 6px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: #1a1a1a;
+            color: #fff;
+            font-size: 14px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .max-pages-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        .stat {
+            background: #1a1a1a;
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 600;
+            color: #3b82f6;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        .server-input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #1a1a1a;
+            color: #fff;
+            font-size: 13px;
+            margin-bottom: 12px;
+        }
+
+        .server-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        label {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 4px;
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <span style="font-size: 24px;">⚡</span>
+        <h1>Leadiya Scraper</h1>
+    </div>
+
+    <label>Server URL</label>
+    <input type="text" id="serverUrl" class="server-input" value="http://localhost:3847"
+        placeholder="http://localhost:3847">
+
+    <div id="status" class="status">Ready to capture leads from this page</div>
+
+    <button id="captureBtn" class="btn btn-primary">
+        🎯 Capture Leads from Page
+    </button>
+
+    <div class="capture-all-row">
+        <button id="captureAllBtn" class="btn btn-secondary">
+            🔄 Capture All (Multi-Page)
+        </button>
+        <input type="number" id="maxPages" class="max-pages-input" value="10" min="1" max="50"
+            title="Max pages to scrape">
+    </div>
+
+    <div id="progressWrap" style="display:none; margin-bottom: 12px;">
+        <div style="background:#1a1a1a; border-radius:6px; overflow:hidden; height:6px;">
+            <div id="progressBar" style="background:#3b82f6; height:100%; width:0%; transition:width 0.3s;"></div>
+        </div>
+        <div id="progressText" style="font-size:11px; color:#888; margin-top:4px;"></div>
+    </div>
+
+    <div class="stats">
+        <div class="stat">
+            <div class="stat-value" id="leadsFound">-</div>
+            <div class="stat-label">Found</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value" id="leadsSaved">-</div>
+            <div class="stat-label">Saved</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value" id="leadsSkipped">-</div>
+            <div class="stat-label">Skipped</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value" id="pagesScraped">-</div>
+            <div class="stat-label">Pages</div>
+        </div>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+
+</html>
