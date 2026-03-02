@@ -5,6 +5,7 @@ import { cors } from 'hono/cors';
 import { leads } from './leads.js';
 import { outreach } from './outreach.js';
 import { sources, runSource } from './sources.js';
+import { config } from './config.js';
 
 const app = new Hono();
 
@@ -177,13 +178,9 @@ app.post('/api/outreach/process', async (c) => {
 
 // Channel status - check which channels are ready
 app.get('/api/channels/status', async (c) => {
-    // For now, return mock status since Moltbot isn't connected
-    // In production, this would check gateway.isConnected() for each channel
-    return c.json({
-        whatsapp: { ready: false, message: 'Requires Moltbot gateway' },
-        email: { ready: false, message: 'SMTP not configured' },
-        telegram: { ready: false, message: 'Bot token not set' }
-    });
+    const { messenger } = await import('./channels/index.js');
+    const status = await messenger.getChannelStatus();
+    return c.json(status);
 });
 
 // Get available sequences
@@ -362,6 +359,219 @@ app.post('/api/automation/stop', async (c) => {
     automation.stop();
     const status = await automation.getStatus();
     return c.json({ success: true, ...status });
+});
+
+// =====================================================
+// DASHBOARD OVERVIEW
+// =====================================================
+
+app.get('/api/dashboard', async (c) => {
+    await leads.connect();
+    const stats = await leads.getStats();
+    const allLeads = await leads.getAll();
+    const recentLeads = allLeads
+        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+        .slice(0, 10);
+    return c.json({ stats, recentLeads, totalLeads: allLeads.length });
+});
+
+// =====================================================
+// LEAD STATE / BULK OPS
+// =====================================================
+
+// Update lead state
+app.put('/api/leads/:id/state', async (c) => {
+    await leads.connect();
+    const { state } = await c.req.json();
+    const lead = await leads.update(c.req.param('id'), { state });
+    if (!lead) return c.json({ error: 'Lead not found' }, 404);
+    return c.json(lead);
+});
+
+// Enrich lead (trigger re-qualification)
+app.post('/api/leads/:id/enrich', async (c) => {
+    await leads.connect();
+    const { qualifier } = await import('./qualifier.js');
+    const lead = await leads.get(c.req.param('id'));
+    if (!lead) return c.json({ error: 'Lead not found' }, 404);
+    const result = qualifier.qualify(lead);
+    await leads.update(c.req.param('id'), {
+        score: result.score,
+        signalSummary: qualifier.generateSignalSummary(result.matchedSignals),
+        state: result.qualified ? 'qualified' : lead.state,
+    });
+    return c.json({ success: true, score: result.score, qualified: result.qualified });
+});
+
+// Start sequence for lead
+app.post('/api/leads/:id/sequence', async (c) => {
+    await leads.connect();
+    const { sequence } = await c.req.json().catch(() => ({ sequence: 'cold_outreach' }));
+    const success = await outreach.startSequence(c.req.param('id'), sequence);
+    return c.json({ success });
+});
+
+// Bulk state update
+app.post('/api/leads/bulk/state', async (c) => {
+    await leads.connect();
+    const { ids, state } = await c.req.json();
+    const results = await Promise.all(ids.map((id: string) => leads.update(id, { state })));
+    return c.json({ success: true, updated: results.filter(Boolean).length });
+});
+
+// Bulk delete
+app.post('/api/leads/bulk/delete', async (c) => {
+    await leads.connect();
+    const { ids } = await c.req.json();
+    const results = await Promise.all(ids.map((id: string) => leads.delete(id)));
+    return c.json({ success: true, deleted: results.filter(Boolean).length });
+});
+
+// Bulk tags
+app.post('/api/leads/bulk/tags', async (c) => {
+    await leads.connect();
+    const { ids, tags } = await c.req.json();
+    const results = await Promise.all(ids.map(async (id: string) => {
+        const lead = await leads.get(id);
+        if (!lead) return false;
+        const mergedTags = [...new Set([...(lead.tags || []), ...tags])];
+        return leads.update(id, { tags: mergedTags });
+    }));
+    return c.json({ success: true, updated: results.filter(Boolean).length });
+});
+
+// =====================================================
+// SCRAPERS API
+// =====================================================
+
+import { listScrapers, runScraper, getScraperStatus, stopScraper } from './scraper-registry.js';
+
+app.get('/api/scrapers', (c) => {
+    return c.json({ scrapers: listScrapers() });
+});
+
+app.post('/api/scrapers/:name/run', async (c) => {
+    const params = await c.req.json().catch(() => ({}));
+    const result = runScraper(c.req.param('name'), params);
+    return c.json(result);
+});
+
+app.get('/api/scrapers/:runId/status', (c) => {
+    const status = getScraperStatus(c.req.param('runId'));
+    if (!status) return c.json({ error: 'Run not found' }, 404);
+    return c.json(status);
+});
+
+app.post('/api/scrapers/stop/:runId', (c) => {
+    const stopped = stopScraper(c.req.param('runId'));
+    return c.json({ success: stopped });
+});
+
+// =====================================================
+// WHATSAPP API
+// =====================================================
+
+import { whatsapp } from './channels/whatsapp.js';
+
+app.get('/api/whatsapp/status', async (c) => {
+    const ready = await whatsapp.isReady();
+    const qr = whatsapp.getQR?.() || null;
+    return c.json({
+        connected: ready,
+        status: ready ? 'connected' : (qr ? 'awaiting_scan' : 'disconnected'),
+        qr,
+    });
+});
+
+app.post('/api/whatsapp/connect', async (c) => {
+    const connected = await whatsapp.connect();
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    const qr = whatsapp.getQR?.() || null;
+    return c.json({
+        success: connected || !!qr,
+        status: connected ? 'connected' : (qr ? 'awaiting_scan' : 'connecting'),
+        qr,
+    });
+});
+
+app.get('/api/whatsapp/qr', (c) => {
+    const qr = whatsapp.getQR?.() || null;
+    return c.json({ qr });
+});
+
+app.get('/api/whatsapp/conversations', async (c) => {
+    const { whatsappMessages } = await import('./whatsapp-messages.js');
+    const conversations = whatsappMessages.getConversations();
+    return c.json({ conversations });
+});
+
+app.get('/api/whatsapp/messages/:jid', async (c) => {
+    const jid = decodeURIComponent(c.req.param('jid'));
+    const { whatsappMessages } = await import('./whatsapp-messages.js');
+    const messages = whatsappMessages.getMessages(jid);
+    return c.json({ messages });
+});
+
+app.post('/api/whatsapp/reply/:jid', async (c) => {
+    const jid = decodeURIComponent(c.req.param('jid'));
+    const { message } = await c.req.json();
+    const result = await whatsapp.sendToJid(jid, message);
+    return c.json(result);
+});
+
+app.post('/api/whatsapp/media/:jid', async (c) => {
+    const jid = decodeURIComponent(c.req.param('jid'));
+    const body = await c.req.json();
+    try {
+        const mediaBuffer = Buffer.from(body.data || '', 'base64');
+        const result = await whatsapp.sendMediaToJid(jid, mediaBuffer, {
+            mimetype: body.mimetype || 'image/jpeg',
+            filename: body.filename,
+            caption: body.caption,
+        });
+        return c.json(result);
+    } catch (err) {
+        return c.json({ success: false, error: err instanceof Error ? err.message : 'Media send failed' });
+    }
+});
+
+// =====================================================
+// TELEGRAM API
+// =====================================================
+
+app.get('/api/telegram/status', async (c) => {
+    const { telegram } = await import('./channels/telegram.js');
+    const ready = await telegram.isReady();
+    return c.json({ connected: ready, status: ready ? 'connected' : 'disconnected' });
+});
+
+// =====================================================
+// TEMPLATES API
+// =====================================================
+
+app.get('/api/templates', async (c) => {
+    try {
+        const sequences = config.loadSequences();
+        // Extract templates from sequences
+        const templates: { id: string; name: string; content: string; sequence: string }[] = [];
+        if (sequences.sequences) {
+            for (const [seqName, seq] of Object.entries(sequences.sequences)) {
+                for (const step of (seq as any).steps || []) {
+                    if (step.template) {
+                        templates.push({
+                            id: `${seqName}_${step.id}`,
+                            name: `${seqName} — ${step.id}`,
+                            content: step.template,
+                            sequence: seqName,
+                        });
+                    }
+                }
+            }
+        }
+        return c.json({ templates });
+    } catch {
+        return c.json({ templates: [] });
+    }
 });
 
 // Serve static files
