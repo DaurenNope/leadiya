@@ -1,0 +1,24 @@
+{
+  "name": "@leadiya/extension",
+  "version": "1.0.0",
+  "description": "Leadiya Chrome Extension for captcha sites",
+  "type": "module",
+  "scripts": {
+    "build": "wxt build",
+    "dev": "wxt",
+    "dev:chrome": "wxt --browser chrome",
+    "dev:firefox": "wxt --browser firefox"
+  },
+  "dependencies": {
+    "@wxt-dev/module-react": "^1.2.2",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "wxt": "^0.20.20"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.254",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.3.3"
+  }
+}

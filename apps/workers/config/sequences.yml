@@ -1,0 +1,198 @@
+# Outreach Sequences
+# Russian templates for Kazakhstan B2B market
+
+sequences:
+  # Cold outreach - WhatsApp first, then email
+  cold_outreach:
+    trigger: qualified_lead
+    steps:
+      - id: whatsapp_initial
+        delay: 0
+        channel: whatsapp
+        template: |
+          Добрый день! 👋
+          
+          Меня зовут {{first_name}} из Rahmet Labs.
+          
+          Мы помогаем компаниям вашей сферы с сайтами и автоматизацией.
+          Заметил {{company}} — есть несколько идей, как можем быть полезны.
+          
+          Можем созвониться на 15 минут?
+
+      - id: whatsapp_followup
+        delay: 3d
+        channel: whatsapp
+        condition: no_response
+        template: |
+          Добрый день! 
+          
+          Писал ранее про сотрудничество с {{company}}.
+          
+          Если интересно — я свободен в ближайшие дни.
+          Если нет — просто дайте знать, не буду беспокоить 🙏
+
+      - id: email_followup
+        delay: 5d
+        channel: email
+        condition: no_response
+        template: |
+          Тема: Сотрудничество с {{company}}
+          
+          Здравствуйте!
+          
+          Писал в WhatsApp, решил продублировать на почту.
+          
+          Мы из Rahmet Labs — делаем цифровые решения для бизнеса:
+          • Сайты и веб-сервисы
+          • Автоматизация процессов
+          • CRM и интеграции (1С, Kaspi)
+          
+          Есть 15 минут обсудить?
+          
+          Календарь для записи: {{calendar_url}}
+          
+          {{signature}}
+
+  # Kazakh language version
+  cold_outreach_kk:
+    trigger: qualified_lead_kk
+    steps:
+      - id: whatsapp_initial_kk
+        delay: 0
+        channel: whatsapp
+        template: |
+          Сәлеметсіз бе! 👋
+          
+          Мен Rahmet Labs компаниясынан хабарласып тұрмын.
+          
+          Біз сіздің саладағы компанияларға сайттар мен автоматтандыру бойынша көмектесеміз.
+          
+          {{company}} жайлы бірнеше ойымыз бар.
+          
+          15 минутқа сөйлесе аламыз ба?
+
+  # Inbound leads (responded to content, filled form)
+  inbound:
+    trigger: inbound_lead
+    steps:
+      - id: initial
+        delay: 0
+        channel: whatsapp
+        template: |
+          Спасибо за обращение! 🙏
+          
+          Расскажите, над чем сейчас работаете?
+          
+          Это поможет понять, чем можем быть полезны.
+
+      - id: qualify
+        delay: 1d
+        channel: whatsapp
+        condition: no_response
+        template: |
+          Привет! Хотел уточнить — мое сообщение дошло?
+          
+          Чем занимается {{company}}?
+
+  # Post-meeting sequence
+  post_meeting:
+    trigger: meeting_completed
+    steps:
+      - id: recap
+        delay: 2h
+        channel: email
+        template: |
+          Тема: Спасибо за встречу!
+          
+          Было приятно пообщаться сегодня.
+          
+          Как обсудили:
+          {{meeting_notes}}
+          
+          Следующие шаги: {{next_steps}}
+          
+          Если будут вопросы — пишите!
+          
+          {{signature}}
+
+      - id: proposal
+        delay: 1d
+        channel: email
+        condition: send_proposal
+        template: |
+          Тема: Предложение для {{company}}
+          
+          Здравствуйте!
+          
+          Подготовил предложение по нашему разговору: {{proposal_link}}
+          
+          Ключевые моменты:
+          • {{proposal_summary}}
+          
+          Готов обсудить детали.
+          
+          {{signature}}
+
+  # Re-engagement for cold leads
+  reactivation:
+    trigger: lead_gone_cold
+    cooldown: 30d
+    steps:
+      - id: reactivate
+        delay: 0
+        channel: whatsapp
+        template: |
+          Привет! Давно не общались.
+          
+          Мы недавно сделали интересный проект для {{industry}} — подумал про {{company}}.
+          
+          Как у вас дела с {{original_pain_point}}?
+
+# Response handling
+responses:
+  positive_signals:
+    - "интересно"
+    - "расскажите"
+    - "давайте"
+    - "да"
+    - "хорошо"
+    - "ок"
+    - "можно"
+    - "созвонимся"
+    - "когда"
+    - "interesting"
+    - "yes"
+    - "sure"
+    
+  negative_signals:
+    - "нет"
+    - "не интересует"
+    - "отстаньте"
+    - "спам"
+    - "не пишите"
+    - "no"
+    - "stop"
+    
+  auto_replies:
+    pricing:
+      trigger: ["сколько стоит", "цена", "прайс", "бюджет", "how much", "pricing"]
+      response: |
+        Стоимость зависит от проекта.
+        
+        Сайты обычно от 300,000 до 1,500,000 тг.
+        Автоматизация — от 500,000 тг.
+        
+        Что именно планируете?
+        
+        Или можем созвониться: {{calendar_url}}
+
+    timeline:
+      trigger: ["сколько времени", "сроки", "когда готово", "timeline", "when"]
+      response: |
+        Зависит от проекта:
+        
+        • Лендинг: 1-2 недели
+        • Корпоративный сайт: 3-4 недели
+        • Веб-сервис: 4-8 недель
+        
+        А какой у вас дедлайн?

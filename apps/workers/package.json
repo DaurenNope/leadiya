@@ -1,0 +1,33 @@
+{
+  "name": "@leadiya/workers",
+  "version": "1.0.0",
+  "description": "Leadiya Background Workers",
+  "main": "dist/main.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@hapi/boom": "^9.1.4",
+    "@leadiya/config": "*",
+    "@leadiya/db": "*",
+    "@leadiya/queue": "*",
+    "@leadiya/scrapers": "*",
+    "@types/qrcode-terminal": "^0.12.2",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "bullmq": "^5.1.0",
+    "ioredis": "^5.3.2",
+    "node-cron": "^3.0.3",
+    "pino": "^9.7.0",
+    "qrcode-terminal": "^0.12.0",
+    "yaml": "^2.8.3"
+  },
+  "devDependencies": {
+    "@types/node-cron": "^3.0.11",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

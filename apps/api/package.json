@@ -1,0 +1,32 @@
+{
+  "name": "@leadiya/api",
+  "version": "1.0.0",
+  "description": "Leadiya Hono API",
+  "main": "dist/main.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.9",
+    "@leadiya/config": "*",
+    "@leadiya/db": "*",
+    "@leadiya/queue": "*",
+    "@leadiya/scrapers": "*",
+    "@supabase/supabase-js": "^2.95.3",
+    "bullmq": "^5.71.0",
+    "hono": "^4.11.7",
+    "jose": "^6.2.2",
+    "stripe": "^14.0.0",
+    "yaml": "^2.8.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

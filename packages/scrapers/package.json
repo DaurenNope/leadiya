@@ -1,0 +1,39 @@
+{
+  "name": "@leadiya/scrapers",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@crawlee/playwright": "^3.16.0",
+    "@leadiya/config": "*",
+    "@leadiya/types": "*",
+    "@leadiya/db": "*",
+    "2gis-api": "^0.1.6",
+    "axios": "^1.13.6",
+    "cheerio": "^1.0.0-rc.12",
+    "crawlee": "^3.16.0",
+    "p-limit": "^4.0.0",
+    "p-retry": "^6.2.0",
+    "playwright": "^1.58.2",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "tough-cookie": "^4.1.3",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/cheerio": "^0.22.35",
+    "@types/node": "^20.19.37",
+    "@types/tough-cookie": "^4.0.5",
+    "typescript": "^5.9.3"
+  }
+}

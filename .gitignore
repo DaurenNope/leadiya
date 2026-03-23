@@ -3,15 +3,27 @@ node_modules/
 
 # Build output
 dist/
+*.tsbuildinfo
+apps/extension/.output/
+
+# Turbo
+.turbo/
 
 # Environment
 .env
-.env.*
+.env.local
+.env.*.local
+!.env.example
 
-# WhatsApp auth data
-wa-auth/
-data/whatsapp_auth/
-data/
+# Scraper runtime data
+.twogis-checkpoints/
+.twogis-debug/
+storage/
+crawlee_storage/
+
+# OS
+.DS_Store
+Thumbs.db
 
 # IDE
 .idea/
@@ -19,12 +31,15 @@ data/
 *.swp
 *.swo
 
-# OS
-.DS_Store
-Thumbs.db
-
 # Logs
 *.log
 
-# Reports (generated)
-reports/screenshots/
+# Redis local snapshot (do not commit)
+dump.rdb
+
+# WhatsApp auth (deprecated)
+wa-auth/
+data/
+
+# Test artifacts
+.test-checkpoints/

@@ -1,0 +1,25 @@
+{
+  "name": "@leadiya/logic",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@leadiya/types": "*",
+    "@leadiya/config": "*",
+    "@leadiya/db": "*",
+    "pino": "^8.19.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

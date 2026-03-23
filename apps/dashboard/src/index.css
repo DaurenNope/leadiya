@@ -1,0 +1,155 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-50: #f0fdfa;
+  --color-brand-100: #ccfbf1;
+  --color-brand-200: #99f6e4;
+  --color-brand-300: #5eead4;
+  --color-brand-400: #2dd4bf;
+  --color-brand-500: #14b8a6; /* Royal Teal */
+  --color-brand-600: #0d9488;
+  --color-brand-700: #0f766e;
+  --color-brand-800: #115e59;
+  --color-brand-900: #134e4a;
+
+  --color-gold-400: #fbbf24;
+  --color-gold-500: #f59e0b;
+  --color-gold-600: #d97706;
+
+  --color-accent-indigo: #6366f1;
+  --color-accent-cyan: #06b6d4;
+  --color-accent-emerald: #10b981;
+
+  --animate-pulse-slow: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-shimmer: shimmer 2.5s linear infinite;
+}
+
+:root {
+  font-family: 'Inter', 'Outfit', system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: dark;
+  color: #f8fafc;
+  background-color: #020617;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  --brand-500: #0ea5e9;
+  --brand-400: #38bdf8;
+  --brand-600: #0284c7;
+  --midnight: #020617;
+}
+
+@layer base {
+  body {
+    @apply bg-[#020617] text-slate-50 antialiased;
+  }
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  @apply bg-[#020617] text-slate-50 selection:bg-brand-500/30 selection:text-white;
+}
+
+/* Custom Scrollbar for Premium Feel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.5);
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-800 rounded-full border-2 border-slate-950;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-700;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+#root {
+  width: 100%;
+}
+
+/* Glassmorphism & Premium Classes */
+.glass-sidebar {
+  @apply bg-slate-950/40 backdrop-blur-2xl border-r border-white/5;
+}
+
+.glass-card {
+  @apply bg-slate-900/40 backdrop-blur-xl border border-white/5 shadow-2xl;
+}
+
+.glass-header {
+  @apply bg-slate-950/60 backdrop-blur-md border-b border-white/5;
+}
+
+.premium-gradient-text {
+  @apply bg-clip-text text-transparent bg-gradient-to-br from-white via-slate-100 to-slate-400 font-bold;
+}
+
+.brand-gradient-text {
+  @apply bg-clip-text text-transparent bg-gradient-to-r from-brand-400 via-indigo-400 to-cyan-400;
+}
+
+/* Animations */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.4s ease-out forwards;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.sidebar-item-active {
+  @apply bg-brand-500/10 text-brand-400 border border-brand-500/20 shadow-inner;
+  box-shadow: inset 0 0 20px rgba(14, 165, 233, 0.05);
+}
+
+.sidebar-item-active svg {
+  filter: drop-shadow(0 0 8px rgba(14, 165, 233, 0.5));
+}
+
+.sidebar-item {
+  @apply flex items-center gap-3 px-4 py-3 rounded-2xl text-[13px] font-bold text-slate-400 transition-all duration-300 border border-transparent;
+}
+
+.sidebar-item:hover {
+  @apply text-white bg-white/5;
+}
+
+.workspace-label {
+  @apply px-4 text-[9px] font-black text-slate-600 uppercase tracking-widest mb-4;
+}
+
+.side-panel-mask {
+  @apply fixed inset-0 bg-slate-950/40 backdrop-blur-sm z-50 transition-opacity duration-300;
+}
+
+.side-panel {
+  @apply fixed top-0 right-0 h-full w-[500px] bg-[#020617] border-l border-white/5 shadow-2xl z-[60] transition-transform duration-500 ease-in-out;
+}
+
+.side-panel-content {
+  @apply h-full overflow-y-auto p-10;
+}
+

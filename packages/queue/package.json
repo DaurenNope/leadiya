@@ -1,0 +1,24 @@
+{
+  "name": "@leadiya/queue",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "bullmq": "^5.41.0",
+    "@leadiya/types": "*",
+    "@leadiya/config": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}
