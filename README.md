@@ -1,109 +1,139 @@
-# Leadiya monorepo
+# Leadiya
 
-B2B lead discovery and enrichment platform for Kazakhstan. Scrapes businesses from 2GIS, enriches from government/public APIs, and provides a dashboard for managing the pipeline.
+B2B lead discovery and enrichment for Kazakhstan: **2GIS** scraping, **government/public** enrichment, a **dashboard**, optional **browser extension**, and optional **WhatsApp** outreach (Baileys).
+
+**Repository:** [github.com/DaurenNope/leadiya](https://github.com/DaurenNope/leadiya)
+
+## Requirements
+
+- **Node.js** 20+
+- **PostgreSQL** (local or [Supabase](https://supabase.com/) Postgres)
+- **Redis** (BullMQ queues)
 
 ## Quick start
 
 ```bash
-# 1. Install dependencies
-npm install
+git clone https://github.com/DaurenNope/leadiya.git
+cd leadiya
 
-# 2. Copy env and fill in required values
+npm install --legacy-peer-deps
+
 cp .env.example .env
+# Edit .env: DATABASE_*, REDIS_URL, and either AUTH_BYPASS=true or Supabase keys
 
-# 3. Build all packages
 npm run build
-
-# 4. Run tests
 npm test
-
-# 5. Run linter
-npm run lint
-
-# 6. Start development servers (API on :3001, Dashboard on :5173)
 npm run dev
 ```
 
-Requires: Node 20+, PostgreSQL, Redis. Set `AUTH_BYPASS=true` in `.env` for local development without Supabase auth.
+With `npm run dev`, Turbo starts workspace dev processes (API **:3001**, dashboard **:5173**, etc. per package scripts).
 
-### Database setup
+| Local dev tip | |
+|---------------|---|
+| Auth | Set `AUTH_BYPASS=true` in `.env` to skip JWT on `/api/*` (development only). |
+| Supabase egress | For production auth, set `SUPABASE_JWT_SECRET` so the API verifies JWTs locally—see [docs/SUPABASE_FREE_TIER.md](docs/SUPABASE_FREE_TIER.md). |
+
+## Database
 
 ```bash
-# Push schema to database (dev)
+# Apply migrations (from repo root)
 npm run db:migrate -w @leadiya/db
 
-# Generate migration SQL from schema changes
+# Generate SQL after schema edits
 npm run db:generate -w @leadiya/db
 
-# Seed sample data
+# Optional seed
 npm run db:seed -w @leadiya/db
 ```
 
 ## Architecture
 
 ```
-Discovery (2GIS scraper)
-    ↓ writes leads to Postgres
-    ↓ returns new lead IDs
-Enrichment Pipeline (BullMQ)
-    ├── enrich-twogis   (2GIS name search for non-2GIS leads, once per lead)
-    ├── enrich-website  (HTTP + Playwright)
-    ├── enrich-stat     (stat.gov.kz)
-    ├── enrich-uchet    (pk.uchet.kz)
-    └── enrich-goszakup (goszakup.gov.kz)
+Discovery (2GIS scraper / extension)
+    → Postgres (leads)
+    → BullMQ enrichment workers
+        ├── enrich-twogis
+        ├── enrich-website (HTTP + Playwright)
+        ├── enrich-stat (stat.gov.kz)
+        ├── enrich-uchet (pk.uchet.kz)
+        └── enrich-goszakup (goszakup.gov.kz)
+    → Dashboard + REST API
 ```
 
-## Packages
+Optional: **`whatsapp_outreach`** queue + **Baileys** worker when `WHATSAPP_BAILEYS_ENABLED=true` (scan QR on the worker host; auth dir under `apps/workers/data/baileys-auth`, gitignored).
 
-| Package | Description |
-|---------|-------------|
-| `apps/api` | Hono REST API with auth, CSV export, scraper management |
-| `apps/dashboard` | React + Vite + Tailwind dashboard |
-| `apps/workers` | BullMQ workers for discovery and enrichment |
-| `apps/extension` | WXT browser extension for 2GIS |
-| `packages/db` | Drizzle ORM schema, migrations, and database access |
-| `packages/scrapers` | 2GIS scraper, website enrichment, government API clients |
-| `packages/config` | Zod-validated environment configuration |
-| `packages/logic` | Lead factory, deduplication, ICP scoring |
-| `packages/types` | Shared TypeScript types |
+## Workspace layout
 
-## One-off data scripts
+| Path | Role |
+|------|------|
+| `apps/api` | Hono REST API: companies/leads, scrapers, outreach, Stripe hooks |
+| `apps/dashboard` | React + Vite + Tailwind UI |
+| `apps/workers` | BullMQ workers (discovery, enrichment, optional WhatsApp) |
+| `apps/extension` | WXT Chrome extension for 2GIS-assisted capture |
+| `packages/db` | Drizzle schema, migrations, `db` client |
+| `packages/scrapers` | 2GIS, website enrichment, KZ public API clients |
+| `packages/queue` | Shared BullMQ queue names + job types |
+| `packages/config` | Zod-validated `env` |
+| `packages/logic` | Lead factory, ICP helpers |
+| `packages/types` | Shared TS types |
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/broader-2gis-sample.ts` | Bounded multi-city/category scrape (edit `CITIES` / `CATEGORIES` / `limits` inside the file) |
-| `scripts/evaluate-leads-quality.ts` | Read-only DB report: counts, fill rates, recent 2GIS samples (`--hours=24`) |
-| `scripts/parallel-smoke-2gis.ts` | Quick parallel smoke test (3 slices, tiny limits) |
-| `scripts/scrape-education-hei.ts` | Universities / institutes / colleges / business schools across KZ cities (bounded limits; checkpoints on) |
+## Environment
+
+Copy **[.env.example](.env.example)** to `.env`. Important groups:
+
+- **Core:** `DATABASE_URL`, `DATABASE_DIRECT_URL`, `REDIS_URL`
+- **Auth:** `AUTH_BYPASS` or `SUPABASE_*` + recommended `SUPABASE_JWT_SECRET`
+- **WhatsApp:** `WHATSAPP_BAILEYS_ENABLED`, `WHATSAPP_BAILEYS_AUTH_DIR` (optional)
+- **Tuning:** `SCRAPER_RUNS_CACHE_MS`, `STAGE2_HTTP_ONLY`, `TWOGIS_CHECKPOINT_DIR`
+
+## Documentation
+
+| Doc | Topic |
+|-----|--------|
+| [docs/SUPABASE_FREE_TIER.md](docs/SUPABASE_FREE_TIER.md) | Egress-aware Postgres + auth usage |
+| [docs/TESTING.md](docs/TESTING.md) | Tests (`vitest`) |
+| [docs/progress/STATUS.md](docs/progress/STATUS.md) | Build / status notes |
+| [docs/progress/PLAN_MVP_AND_ROADMAP.md](docs/progress/PLAN_MVP_AND_ROADMAP.md) | Roadmap |
+| [docs/progress/2GIS_STRATEGY.md](docs/progress/2GIS_STRATEGY.md) | 2GIS scraping |
+| [docs/progress/DATA_COLLECTION_100K_PLAN.md](docs/progress/DATA_COLLECTION_100K_PLAN.md) | Scaling data collection |
+| [docs/progress/EXTENSION_UTILIZATION.md](docs/progress/EXTENSION_UTILIZATION.md) | Extension vs headless scraper |
+
+## Scripts (repo root)
 
 ```bash
+npm run build          # turbo build
+npm run dev            # turbo dev
+npm run lint           # turbo lint / tsc
+npm test               # vitest
+
 npx tsx --env-file=.env scripts/evaluate-leads-quality.ts
 npx tsx --env-file=.env scripts/broader-2gis-sample.ts
 ```
 
-## Documentation
-
-- **[docs/progress/STATUS.md](docs/progress/STATUS.md)** — current build status
-- **[docs/progress/PLAN_MVP_AND_ROADMAP.md](docs/progress/PLAN_MVP_AND_ROADMAP.md)** — MVP plan and roadmap
-- **[docs/progress/2GIS_STRATEGY.md](docs/progress/2GIS_STRATEGY.md)** — scraping approach
-- **[docs/progress/DATA_COLLECTION_100K_PLAN.md](docs/progress/DATA_COLLECTION_100K_PLAN.md)** — overlap rules, extension vs dashboard, scaling to ~100k leads
-- **[docs/progress/EXTENSION_UTILIZATION.md](docs/progress/EXTENSION_UTILIZATION.md)** — when to use the 2GIS browser extension vs API scraper
-- **[docs/TESTING.md](docs/TESTING.md)** — test setup and structure
-- **[.env.example](.env.example)** — all environment variables
+More one-off scripts are listed under **One-off data scripts** in older docs or `scripts/`.
 
 ## CI
 
-GitHub Actions runs on push to `main` and on PRs: build, lint, and test.
+[.github/workflows/ci.yml](.github/workflows/ci.yml) runs build, lint, and tests on push/PR to `main`.
 
 ## Docker
 
 ```bash
-# API
 docker build --target api -t leadiya-api .
-
-# Workers
 docker build --target workers -t leadiya-workers .
-
-# Dashboard (nginx)
 docker build --target dashboard -t leadiya-dashboard .
 ```
+
+## Contributing / git
+
+```bash
+git add -A
+git commit -m "describe change"
+git push origin main
+```
+
+Use **`npm install --legacy-peer-deps`** if npm reports peer dependency conflicts (Vite/Tailwind workspace edges).
+
+## License
+
+Add a `LICENSE` file in the repo root when you choose a license; until then, all rights reserved.
