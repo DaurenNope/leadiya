@@ -3,15 +3,230 @@
  *
  *   npx tsx --env-file=.env scripts/evaluate-leads-quality.ts
  *   npx tsx --env-file=.env scripts/evaluate-leads-quality.ts --hours=24
+ *   npx tsx --env-file=.env scripts/evaluate-leads-quality.ts --hours=72 --education
+ *   npx tsx --env-file=.env scripts/evaluate-leads-quality.ts --education-only --hours=168
  */
 import { db, leads, contacts } from '@leadiya/db'
-import { sql, desc, gte, eq, and, or, isNotNull } from 'drizzle-orm'
+import { sql, desc, gte, eq, and, or, isNotNull, inArray, ilike } from 'drizzle-orm'
 
 const hoursArg = process.argv.find((a) => a.startsWith('--hours='))
 const hours = hoursArg ? Math.max(1, parseInt(hoursArg.split('=')[1] || '24', 10)) : 24
+const educationMode = process.argv.includes('--education')
+const educationOnly = process.argv.includes('--education-only')
+
+/** Same category list as scripts/scrape-education-hei.ts */
+const EDU_CATEGORIES_EXACT = [
+  'Университеты',
+  'Институты',
+  'Академии',
+  'Колледжи',
+  'Высшие учебные заведения',
+  'Негосударственные вузы',
+  'Бизнес-школы',
+  'Филиалы университетов',
+] as const
+
+/** 2GIS rows that look like HEI / education orgs (matches HEI scraper intent). */
+function heiCategoryOr() {
+  return or(
+    inArray(leads.category, [...EDU_CATEGORIES_EXACT]),
+    ilike(leads.category, '%университет%'),
+    ilike(leads.category, '%институт%'),
+    ilike(leads.category, '%академи%'),
+    ilike(leads.category, '%колледж%'),
+    ilike(leads.category, '%высшие учебные%'),
+    ilike(leads.category, '%негосударственные вуз%'),
+    ilike(leads.category, '%бизнес-школ%'),
+    ilike(leads.category, '%филиал%')
+  )
+}
+
+const hei2gis = and(eq(leads.source, '2gis'), heiCategoryOr())
+
+function pct(part: number, whole: number): string {
+  if (whole <= 0) return '—'
+  return `${((100 * part) / whole).toFixed(1)}%`
+}
+
+async function reportEducation(since: Date) {
+  const createdBatch = and(hei2gis, gte(leads.createdAt, since))
+
+  const [allHei] = await db.select({ n: sql<number>`count(*)::int` }).from(leads).where(hei2gis)
+  const [createdN] = await db.select({ n: sql<number>`count(*)::int` }).from(leads).where(createdBatch)
+
+  const [cSite] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(leads)
+    .where(and(createdBatch, isNotNull(leads.website), sql`trim(${leads.website}) != ''`))
+  const [cUrl] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(leads)
+    .where(and(createdBatch, isNotNull(leads.sourceUrl), sql`trim(${leads.sourceUrl}) != ''`))
+  const [cEmail] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(leads)
+    .where(and(createdBatch, isNotNull(leads.email), sql`trim(${leads.email}) != ''`))
+  const [cWa] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(leads)
+    .where(and(createdBatch, isNotNull(leads.whatsapp), sql`trim(${leads.whatsapp}) != ''`))
+  const [cTg] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(leads)
+    .where(and(createdBatch, isNotNull(leads.telegram), sql`trim(${leads.telegram}) != ''`))
+  const [cRating] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(leads)
+    .where(and(createdBatch, isNotNull(leads.rating2gis), sql`trim(${leads.rating2gis}) != ''`))
+  const [cReviews] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(leads)
+    .where(and(createdBatch, sql`coalesce(${leads.reviewsCount2gis}, 0) > 0`))
+
+  const [phoneBatch] = await db
+    .select({ n: sql<number>`count(distinct ${contacts.leadId})::int` })
+    .from(contacts)
+    .innerJoin(leads, eq(contacts.leadId, leads.id))
+    .where(
+      and(
+        createdBatch,
+        isNotNull(contacts.phone),
+        sql`trim(${contacts.phone}) != ''`
+      )
+    )
+
+  const byCity = await db
+    .select({
+      city: leads.city,
+      n: sql<number>`count(*)::int`,
+    })
+    .from(leads)
+    .where(createdBatch)
+    .groupBy(leads.city)
+    .orderBy(desc(sql`count(*)`))
+
+  const byCategory = await db
+    .select({
+      category: leads.category,
+      n: sql<number>`count(*)::int`,
+    })
+    .from(leads)
+    .where(createdBatch)
+    .groupBy(leads.category)
+    .orderBy(desc(sql`count(*)`))
+
+  const dupGroups = await db
+    .select({
+      cnt: sql<number>`count(*)::int`,
+    })
+    .from(leads)
+    .where(hei2gis)
+    .groupBy(
+      sql`lower(trim(coalesce(${leads.name}, '')))`,
+      sql`lower(trim(coalesce(${leads.city}, '')))`
+    )
+    .having(sql`count(*) > 1`)
+
+  const dupLeadRows = dupGroups.reduce((s, r) => s + (r.cnt - 1), 0)
+
+  const samples = await db
+    .select({
+      name: leads.name,
+      city: leads.city,
+      category: leads.category,
+      website: leads.website,
+      sourceUrl: leads.sourceUrl,
+      whatsapp: leads.whatsapp,
+      rating2gis: leads.rating2gis,
+      reviewsCount2gis: leads.reviewsCount2gis,
+      createdAt: leads.createdAt,
+    })
+    .from(leads)
+    .where(createdBatch)
+    .orderBy(desc(leads.createdAt))
+    .limit(25)
+
+  const n = createdN?.n ?? 0
+
+  console.log('')
+  console.log('══════════════════════════════════════════════════════════')
+  console.log('EDUCATION / HEI DATA EVALUATION (2GIS, category ~ HEI)')
+  console.log('══════════════════════════════════════════════════════════')
+  console.log('')
+  console.log(`  HEI-shaped leads (all time, source=2gis):  ${allHei?.n ?? 0}`)
+  console.log(`  Created in last ${hours}h (this batch window): ${n}`)
+  console.log('')
+  if (n === 0) {
+    console.log('  No HEI-shaped leads created in this window — try --hours=168 or run without --education.')
+    console.log('══════════════════════════════════════════════════════════')
+    console.log('')
+    return
+  }
+
+  console.log(`Coverage of the ${n} lead(s) created in the last ${hours}h`)
+  console.log(`  sourceUrl (2GIS card):  ${cUrl?.n ?? 0}  (${pct(cUrl?.n ?? 0, n)})`)
+  console.log(`  website:                  ${cSite?.n ?? 0}  (${pct(cSite?.n ?? 0, n)})`)
+  console.log(`  ≥1 phone in contacts:     ${phoneBatch?.n ?? 0}  (${pct(phoneBatch?.n ?? 0, n)})`)
+  console.log(`  email on lead:            ${cEmail?.n ?? 0}  (${pct(cEmail?.n ?? 0, n)})`)
+  console.log(`  whatsapp on lead:         ${cWa?.n ?? 0}  (${pct(cWa?.n ?? 0, n)})`)
+  console.log(`  telegram on lead:         ${cTg?.n ?? 0}  (${pct(cTg?.n ?? 0, n)})`)
+  console.log(`  2GIS rating text:         ${cRating?.n ?? 0}  (${pct(cRating?.n ?? 0, n)})`)
+  console.log(`  reviews_count > 0:        ${cReviews?.n ?? 0}  (${pct(cReviews?.n ?? 0, n)})`)
+  console.log('')
+
+  console.log('By city (created in window)')
+  console.log('─'.repeat(50))
+  for (const r of byCity) {
+    console.log(`  ${r.city ?? '(null)'}: ${r.n}`)
+  }
+  console.log('')
+
+  console.log('By 2GIS category (created in window)')
+  console.log('─'.repeat(50))
+  for (const r of byCategory) {
+    console.log(`  ${r.category ?? '(null)'}: ${r.n}`)
+  }
+  console.log('')
+
+  console.log('Duplicate check (all-time HEI-shaped): same name+city, different rows')
+  console.log(`  Groups with duplicates: ${dupGroups.length}  (~${dupLeadRows} redundant rows if merged)`)
+  console.log('')
+
+  console.log(`Samples (up to 25, newest first, created in last ${hours}h)`)
+  console.log('─'.repeat(60))
+  for (const r of samples) {
+    const urlOk = r.sourceUrl ? 'card:yes' : 'card:no'
+    const web = r.website ? 'web:yes' : 'web:no'
+    console.log(`• ${r.name ?? '?'} | ${r.city ?? '?'} | ${r.category ?? '?'}`)
+    console.log(`  ${urlOk} ${web} | ★${r.rating2gis ?? '—'} reviews:${r.reviewsCount2gis ?? 0} | ${r.createdAt?.toISOString?.() ?? ''}`)
+  }
+
+  console.log('')
+  console.log('Verdict (heuristic)')
+  const urlRate = (cUrl?.n ?? 0) / n
+  const siteRate = (cSite?.n ?? 0) / n
+  const phoneRate = (phoneBatch?.n ?? 0) / n
+  if (urlRate >= 0.9 && siteRate >= 0.5) {
+    console.log('  Strong: most rows have a stable 2GIS URL and many have own websites — good for outreach / enrichment.')
+  } else if (urlRate >= 0.8) {
+    console.log('  OK: card URLs are mostly present; enrich websites where missing.')
+  } else {
+    console.log('  Weak: many missing sourceUrl — check scraper extraction or blocked pages.')
+  }
+  if (phoneRate < 0.3) {
+    console.log('  Phones: low vs HEI expectations — detail pages may need richer contact parsing or manual pass.')
+  }
+  console.log('══════════════════════════════════════════════════════════')
+  console.log('')
+}
 
 async function main() {
   const since = new Date(Date.now() - hours * 60 * 60 * 1000)
+
+  if (educationOnly) {
+    await reportEducation(since)
+    return
+  }
 
   const [totalRow] = await db.select({ n: sql<number>`count(*)::int` }).from(leads)
   const [recentRow] = await db
@@ -126,6 +341,13 @@ async function main() {
   console.log('  • BIN: only when shown on card; many SMEs won’t have it')
   console.log('══════════════════════════════════════════════════════════')
   console.log('')
+
+  if (educationMode) {
+    await reportEducation(since)
+  } else {
+    console.log('Tip: for HEI/education runs, add  --education  (optional --education-only --hours=72)')
+    console.log('')
+  }
 }
 
 main().catch((e) => {

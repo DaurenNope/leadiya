@@ -71,7 +71,9 @@ async function main() {
   console.log(`New lead IDs:  ${result.leadIds.length}`)
   if (result.runId) console.log(`scraper_run:   ${result.runId}`)
   console.log('')
-  console.log('Quality check: npx tsx --env-file=.env scripts/evaluate-leads-quality.ts --hours=24')
+  console.log(
+    'Quality check: npx tsx --env-file=.env scripts/evaluate-leads-quality.ts --hours=72 --education'
+  )
   console.log('══════════════════════════════════════')
 }
 

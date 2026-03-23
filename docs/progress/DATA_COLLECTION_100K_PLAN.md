@@ -106,6 +106,7 @@ Run from **repository root** unless noted.
 | **T-UNIT-3** | `npx vitest run apps/workers/src/enqueue-enrichment.test.ts` | All pass |
 | **T-UNIT-4** | `npx vitest run apps/api/src/server.test.ts` | All pass |
 | **T-ALL** | `npx vitest run` | All pass (may be slower) |
+| **T-QUAL-HEI** | `npx tsx --env-file=.env scripts/evaluate-leads-quality.ts --hours=72 --education` | HEI-shaped 2GIS leads: coverage %, by city/category, duplicates, samples |
 | **T-BUILD** | `npm run build` | Exit 0 |
 | **T-SMOKE-PARALLEL** | `npx tsx --env-file=.env scripts/parallel-smoke-2gis.ts` | Completes; logs show 3 Crawlee requests finished; **requires** `DATABASE_URL`, Playwright Chromium, network. Uses `skipProxy: true` in script — see script header |
 
