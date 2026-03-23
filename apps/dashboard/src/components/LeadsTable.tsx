@@ -9,6 +9,34 @@ interface LeadsTableProps {
 type SortKey = 'name' | 'city' | 'bin' | 'status' | 'createdAt' | 'icpScore';
 type SortOrder = 'asc' | 'desc';
 
+/** Matches `leads.city` from 2GIS scrapers (Cyrillic). API also accepts Latin aliases. */
+const FILTER_CITIES = [
+  'Алматы',
+  'Астана',
+  'Шымкент',
+  'Актобе',
+  'Караганда',
+  'Тараз',
+  'Усть-Каменогорск',
+  'Костанай',
+  'Павлодар',
+] as const
+
+/** Common 2GIS search categories + legacy English verticals. */
+const FILTER_CATEGORIES = [
+  'Университеты',
+  'Институты',
+  'Академии',
+  'Колледжи',
+  'Высшие учебные заведения',
+  'Негосударственные вузы',
+  'Бизнес-школы',
+  'Филиалы университетов',
+  'Bars',
+  'Beauty Salons',
+  'Car Services',
+] as const
+
 const SourceBadge = ({ source }: { source: string | null }) => {
   const normalized = (source || '').toLowerCase();
   let styles = 'bg-slate-500/10 text-slate-400 border-slate-500/20';
@@ -120,13 +148,6 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
     fetchLeads();
   }, [fetchLeads]);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (page !== 1) setPage(1);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [search, page]);
-
   const toggleSelectAll = () => {
     if (selectedIds.size === leads.length) {
       setSelectedIds(new Set());
@@ -187,7 +208,10 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
               type="text" 
               placeholder="Search by name, BIN, phone or email..." 
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(1)
+              }}
               className="w-full bg-slate-950/40 border border-white/5 rounded-2xl px-12 py-4 text-xs font-medium focus:border-brand-500/50 transition-all outline-none backdrop-blur-xl group-hover:border-white/10"
             />
             <svg className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-brand-400 transition-colors" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
@@ -300,11 +324,18 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
             <label className="text-[9px] font-black text-slate-550 uppercase tracking-[0.2em] ml-1">Jurisdiction</label>
             <select 
               value={filterCity}
-              onChange={(e) => setFilterCity(e.target.value)}
+              onChange={(e) => {
+                setFilterCity(e.target.value)
+                setPage(1)
+              }}
               className="bg-slate-900 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-black text-slate-300 outline-none focus:border-brand-500/50 appearance-none cursor-pointer hover:bg-slate-800 transition-colors"
             >
               <option value="all">ALL CITIES</option>
-              {['Almaty', 'Astana', 'Shymkent', 'Aktobe', 'Karaganda'].map(city => <option key={city} value={city}>{city.toUpperCase()}</option>)}
+              {FILTER_CITIES.map((city) => (
+                <option key={city} value={city}>
+                  {city}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -312,14 +343,18 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
             <label className="text-[9px] font-black text-slate-550 uppercase tracking-[0.2em] ml-1">Market Vertical</label>
             <select 
               value={filterCategory}
-              onChange={(e) => { setFilterCategory(e.target.value); setPage(1); }}
+              onChange={(e) => {
+                setFilterCategory(e.target.value)
+                setPage(1)
+              }}
               className="bg-slate-900 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-black text-slate-300 outline-none focus:border-brand-500/50 appearance-none cursor-pointer hover:bg-slate-800 transition-colors"
             >
               <option value="all">ALL SECTORS</option>
-              {/* Dynamic options would be better here, fetching from a separate endpoint or returning from API meta */}
-              <option value="Bars">BARS</option>
-              <option value="Beauty Salons">BEAUTY SALONS</option>
-              <option value="Car Services">CAR SERVICES</option>
+              {FILTER_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -327,7 +362,10 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
             <label className="text-[9px] font-black text-slate-550 uppercase tracking-[0.2em] ml-1">Data Origin</label>
             <select 
               value={filterSource}
-              onChange={(e) => setFilterSource(e.target.value)}
+              onChange={(e) => {
+                setFilterSource(e.target.value)
+                setPage(1)
+              }}
               className="bg-slate-900 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-black text-slate-300 outline-none focus:border-brand-500/50 appearance-none cursor-pointer hover:bg-slate-800 transition-colors"
             >
               <option value="all">ALL SOURCES</option>
@@ -339,7 +377,10 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
             <label className="text-[9px] font-black text-slate-550 uppercase tracking-[0.2em] ml-1">ICP Scoring</label>
             <select 
               value={filterIcp}
-              onChange={(e) => setFilterIcp(e.target.value)}
+              onChange={(e) => {
+                setFilterIcp(e.target.value)
+                setPage(1)
+              }}
               className="bg-slate-900 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-black text-slate-300 outline-none focus:border-brand-500/50 appearance-none cursor-pointer hover:bg-slate-800 transition-colors"
             >
               <option value="all">ANY SCORE</option>
@@ -353,7 +394,10 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
             <label className="text-[9px] font-black text-slate-550 uppercase tracking-[0.2em] ml-1">Intelligence</label>
             <select 
               value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
+              onChange={(e) => {
+                setFilterStatus(e.target.value)
+                setPage(1)
+              }}
               className="bg-slate-900 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-black text-slate-300 outline-none focus:border-brand-500/50 appearance-none cursor-pointer hover:bg-slate-800 transition-colors"
             >
               <option value="all">ALL STATES</option>
@@ -381,10 +425,7 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
                 </th>
                 <th 
                   className="px-8 py-6 text-[10px] font-black uppercase tracking-[0.2em] cursor-pointer hover:text-white transition-colors"
-                  onClick={() => {
-                    const nextOrder = sortConfig.key === 'name' && sortConfig.order === 'desc' ? 'asc' : 'desc';
-                    setSortConfig({ key: 'name', order: nextOrder });
-                  }}
+                  onClick={() => handleSort('name')}
                 >
                   <div className="flex items-center gap-2">
                     IDENTIFICATION

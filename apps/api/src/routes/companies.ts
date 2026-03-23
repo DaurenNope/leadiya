@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { db, companies, contacts as contactsTable, inArray } from '@leadiya/db'
-import { sql, desc, eq, and, ilike, or, gte, lte, asc } from 'drizzle-orm'
+import { sql, desc, eq, and, ilike, or, gte, lte, asc, exists, type SQL } from 'drizzle-orm'
 import { Queue } from 'bullmq'
 import { env } from '@leadiya/config'
 import { leadDetailFields, leadExportFields, leadListFields } from '../lib/lead-select.js'
@@ -15,33 +15,75 @@ const EXPORT_ROW_MAX = 3_000
 
 const enrichmentQueue = new Queue('enrichment', { connection: { url: env.REDIS_URL } })
 
-function buildWhereClause(c: { req: { query: (k: string) => string | undefined } }) {
-  const q = c.req.query('q')
-  const city = c.req.query('city')
-  const category = c.req.query('category')
-  const source = c.req.query('source')
-  const status = c.req.query('status')
-  const icpMin = c.req.query('icpMin') ? parseInt(c.req.query('icpMin')!) : undefined
-  const icpMax = c.req.query('icpMax') ? parseInt(c.req.query('icpMax')!) : undefined
+/** Latin UI labels + DB spellings (2GIS stores Cyrillic city names). */
+const CITY_FILTER_ALIASES: Record<string, string[]> = {
+  Almaty: ['Алматы', 'Almaty'],
+  Astana: ['Астана', 'Astana', 'Нур-Султан'],
+  Shymkent: ['Шымкент', 'Shymkent'],
+  Aktobe: ['Актобе', 'Aktobe'],
+  Karaganda: ['Караганда', 'Karaganda'],
+  Taraz: ['Тараз', 'Taraz'],
+  'Ust-Kamenogorsk': ['Усть-Каменогорск', 'Ust-Kamenogorsk'],
+  Kostanay: ['Костанай', 'Kostanay'],
+  Pavlodar: ['Павлодар', 'Pavlodar'],
+}
 
-  const conditions = []
+function sanitizeIlikeFragment(s: string): string {
+  return s.replace(/[%_\\]/g, '')
+}
 
-  if (q) {
-    conditions.push(
-      or(
-        ilike(companies.name, `%${q}%`),
-        ilike(companies.bin, `%${q}%`),
-        ilike(companies.city, `%${q}%`),
-        ilike(companies.category, `%${q}%`)
+function buildWhereClause(c: { req: { query: (k: string) => string | undefined } }): SQL | undefined {
+  const qRaw = c.req.query('q')?.trim()
+  const city = c.req.query('city')?.trim()
+  const category = c.req.query('category')?.trim()
+  const source = c.req.query('source')?.trim()
+  const status = c.req.query('status')?.trim()
+  const icpMin = c.req.query('icpMin') ? parseInt(c.req.query('icpMin')!, 10) : undefined
+  const icpMax = c.req.query('icpMax') ? parseInt(c.req.query('icpMax')!, 10) : undefined
+
+  const conditions: SQL[] = []
+
+  if (qRaw && qRaw.length > 0) {
+    const safe = sanitizeIlikeFragment(qRaw)
+    if (safe.length > 0) {
+      const pat = `%${safe}%`
+      conditions.push(
+        or(
+          ilike(companies.name, pat),
+          ilike(companies.bin, pat),
+          ilike(companies.city, pat),
+          ilike(companies.category, pat),
+          exists(
+            db
+              .select({ one: sql`1` })
+              .from(contactsTable)
+              .where(
+                and(
+                  eq(contactsTable.leadId, companies.id),
+                  or(ilike(contactsTable.phone, pat), ilike(contactsTable.email, pat))
+                )
+              )
+          )
+        )!
       )
-    )
+    }
   }
-  if (city && city !== 'ALL CITIES') conditions.push(eq(companies.city, city))
-  if (category && category !== 'ALL SECTORS') conditions.push(eq(companies.category, category))
-  if (source && source !== 'ALL SOURCES') conditions.push(eq(companies.source, source))
-  if (status && status !== 'ALL STATES') conditions.push(eq(companies.status, status))
-  if (icpMin !== undefined) conditions.push(gte(companies.icpScore, icpMin))
-  if (icpMax !== undefined) conditions.push(lte(companies.icpScore, icpMax))
+
+  if (city && city.length > 0 && city.toLowerCase() !== 'all') {
+    const variants = CITY_FILTER_ALIASES[city] ?? [city]
+    conditions.push(or(...variants.map((v) => eq(companies.city, v)))!)
+  }
+  if (category && category.length > 0 && category.toLowerCase() !== 'all') {
+    conditions.push(eq(companies.category, category))
+  }
+  if (source && source.length > 0 && source.toLowerCase() !== 'all') {
+    conditions.push(eq(companies.source, source))
+  }
+  if (status && status.length > 0 && status.toLowerCase() !== 'all') {
+    conditions.push(eq(companies.status, status))
+  }
+  if (icpMin !== undefined && !Number.isNaN(icpMin)) conditions.push(gte(companies.icpScore, icpMin))
+  if (icpMax !== undefined && !Number.isNaN(icpMax)) conditions.push(lte(companies.icpScore, icpMax))
 
   return conditions.length > 0 ? and(...conditions) : undefined
 }
@@ -50,7 +92,7 @@ companiesRouter.get('/', async (c) => {
   const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '50', 10), 1), LEADS_PAGE_MAX)
   const offset = Math.min(Math.max(parseInt(c.req.query('offset') || '0', 10), 0), LEADS_OFFSET_MAX)
   const sortBy = c.req.query('sortBy') || 'createdAt'
-  const sortOrder = c.req.query('sortOrder') || 'desc'
+  const sortOrder = c.req.query('sortOrder') === 'asc' ? 'asc' : 'desc'
 
   const whereClause = buildWhereClause(c)
 
@@ -61,7 +103,23 @@ companiesRouter.get('/', async (c) => {
 
   const total = Number(totalCountResult?.count || 0)
 
-  const sortCol = (companies as any)[sortBy] || companies.createdAt
+  type SortCol =
+    | typeof companies.name
+    | typeof companies.city
+    | typeof companies.bin
+    | typeof companies.status
+    | typeof companies.createdAt
+    | typeof companies.icpScore
+
+  const sortCols: Record<string, SortCol> = {
+    name: companies.name,
+    city: companies.city,
+    bin: companies.bin,
+    status: companies.status,
+    createdAt: companies.createdAt,
+    icpScore: companies.icpScore,
+  }
+  const sortCol = sortCols[sortBy] ?? companies.createdAt
   const orderBy = sortOrder === 'asc' ? asc(sortCol) : desc(sortCol)
 
   const results = await db
