@@ -25,9 +25,9 @@ Monorepo with a **discovery-then-enrichment pipeline**:
 | `@leadiya/logic` | LeadFactory, DiscoveryLogic. |
 | API | Hono: companies CRUD, CSV export, scrapers (single-flight, runId), bulk actions, stats. Auth enabled with `AUTH_BYPASS`. |
 | Dashboard | Toast notifications, bulk actions (enrich/archive/export), enrichment status display, settings with pipeline overview. Zero lint errors. |
-| Workers | BullMQ: discovery, 4 enrichment workers (website/stat/uchet/goszakup), freshness watchdog, tender monitor. |
+| Workers | BullMQ: discovery, 4 enrichment workers (website/stat/uchet/goszakup), freshness watchdog, **scraper-runs watchdog** (stale `running` → `error`), tender monitor. |
 | Extension | WXT MV3 + WebSocket bridge. |
-| Tests | vitest: 36 tests across 4 files (scraper extractors, checkpoint, API routes, enrichment pipeline). |
+| Tests | vitest: run `npm test` (API, scrapers, workers unit tests). |
 | Lint | ESLint for dashboard, tsc --noEmit for API and workers. All pass via `npm run lint`. |
 | CI | GitHub Actions: build + lint + test on push/PR to main. |
 | Docker | Multi-stage Dockerfile: API, Workers, Dashboard targets. |

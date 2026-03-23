@@ -53,12 +53,13 @@ This document is the **execution guide** for reaching large-scale 2GIS collectio
 | Field | Record here | Example |
 |-------|-------------|---------|
 | `TARGET_LEADS` | | `100000` |
-| `LEAD_DEFINITION` | branch vs org vs “one row per 2GIS card” | |
+| `LEAD_DEFINITION` | branch vs org vs “one row per 2GIS card” | **one row per 2GIS card** (current schema) |
 | `CITY_LIST` | frozen for the campaign | from `twogis.ts` / dashboard |
 | `CATEGORY_LIST` | frozen | from `twogis.ts` / dashboard |
-| `PRIMARY_DISCOVERY` | `api` \| `discovery_queue` \| `extension_only` | pick **one** for production |
-| `PROXY_POLICY` | when `SMARTPROXY_*` is required | |
+| `PRIMARY_DISCOVERY` | `api` \| `discovery_queue` \| `extension_only` | **`api`** — operator-driven `POST /api/scrapers/2gis` + `scraper_runs`; use `discovery` BullMQ worker only when matrix-partitioned so it never overlaps the same city×category as the API |
+| `PROXY_POLICY` | when `SMARTPROXY_*` is required | set when 2GIS blocks; optional for dev smoke scripts |
 | `CHECKPOINT_DIR` | absolute path on runner | `TWOGIS_CHECKPOINT_DIR` |
+| `STALE_RUN_SWEEP` | workers auto-close stuck `running` rows | **`SCRAPER_RUN_STALE_AFTER_HOURS`** (default **6**); cron every **30m** in `apps/workers/src/scraper-runs-watchdog.ts` |
 
 ---
 
@@ -380,7 +381,7 @@ redis-cli -u "$REDIS_URL" ping
 
 | Symptom | Checks | Action |
 |---------|--------|--------|
-| `scraper_runs.status = 'running'` forever | **§4.1** stuck query | Mark `error` manually with reason after confirming process dead; investigate orphan process |
+| `scraper_runs.status = 'running'` forever | **§4.1** stuck query; workers **scraper-runs-watchdog** (every 30m, default **6h**) | Auto-marked `error` with watchdog message; if immediate unlock needed, still safe to `UPDATE` manually after confirming process dead |
 | Leads grow but never enrich | Workers down, Redis down | Start workers; **§4.3** |
 | Captcha loop | Logs in scraper | Lower concurrency; enable proxy; use extension |
 | Checkpoint stale after URL change | Log `[checkpoint] Search URL changed` | Expected clear; re-run |

@@ -22,6 +22,9 @@ const schema = z.object({
   /** Short cache for GET /api/scrapers/runs to cut repeated DB reads (0 = off). */
   SCRAPER_RUNS_CACHE_MS: z.coerce.number().int().min(0).max(120_000).optional(),
 
+  /** Mark 2GIS API scraper_runs stuck in `running` longer than this as error (workers watchdog). Default 6. */
+  SCRAPER_RUN_STALE_AFTER_HOURS: z.coerce.number().int().min(1).max(168).optional(),
+
   // Auth
   AUTH_BYPASS: z.string().optional(),
 
