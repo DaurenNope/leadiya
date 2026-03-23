@@ -37,6 +37,9 @@ Thumbs.db
 # Redis local snapshot (do not commit)
 dump.rdb
 
+# Supabase CLI local state (hosts/refs; keep out of git)
+supabase/.temp/
+
 # WhatsApp auth (deprecated)
 wa-auth/
 data/
