@@ -4,9 +4,10 @@ import { enrichLeadFromTwogisSearch } from '@leadiya/scrapers'
 const worker = new Worker(
   'enrich-twogis',
   async (job) => {
-    const { leadId } = job.data as { leadId: string }
-    console.log(`[enrich:twogis] ${leadId}`)
+    const { leadId, force } = job.data as { leadId: string; force?: boolean }
+    console.log(`[enrich:twogis] ${leadId}${force ? ' (force)' : ''}`)
     const result = await enrichLeadFromTwogisSearch(leadId, {
+      force: Boolean(force),
       headless: process.env.TWOGIS_ENRICH_HEADLESS !== '0',
       skipProxy: process.env.TWOGIS_ENRICH_SKIP_PROXY === '1',
     })

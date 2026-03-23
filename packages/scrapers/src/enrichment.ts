@@ -94,8 +94,12 @@ export function cleanSocial(type: 'ig' | 'wa' | 'tg', urls: string[]): string | 
 
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g
 
+/** Resolve 2GIS redirect wrappers to the real URL before HTTP / Playwright fetch. */
 export function normalizeWebsiteUrl(website: string): string {
-  const t = website.trim()
+  const raw = website.trim()
+  if (!raw) return ''
+  const decoded = decode2GisLink(raw)
+  const t = (decoded && decoded.trim()) || raw
   return t.startsWith('http') ? t : `https://${t}`
 }
 

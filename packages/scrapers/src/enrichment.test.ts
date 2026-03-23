@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { extractEmailsFromHtml, extractLinksFromHtml, isValidContact, normalizePhone, normalizeEmail } from './enrichment.js'
+import {
+  extractEmailsFromHtml,
+  extractLinksFromHtml,
+  isValidContact,
+  normalizePhone,
+  normalizeEmail,
+  normalizeWebsiteUrl,
+} from './enrichment.js'
 
 describe('extractEmailsFromHtml', () => {
   it('extracts emails from mailto: links', () => {
@@ -72,5 +79,17 @@ describe('normalizePhone', () => {
 describe('normalizeEmail', () => {
   it('lowercases and trims', () => {
     expect(normalizeEmail('  User@Example.COM  ')).toBe('user@example.com')
+  })
+})
+
+describe('normalizeWebsiteUrl', () => {
+  it('adds https for bare host', () => {
+    expect(normalizeWebsiteUrl('example.kz')).toBe('https://example.kz')
+  })
+
+  it('unwraps link.2gis.com redirect to target site', () => {
+    const wrapped =
+      'https://link.2gis.com/4.2/x/aHR0cHM6Ly9leGFtcGxlLmNvbS8'
+    expect(normalizeWebsiteUrl(wrapped).startsWith('https://example.com')).toBe(true)
   })
 })

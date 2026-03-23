@@ -3,6 +3,8 @@ import { db, companies, contacts as contactsTable, inArray } from '@leadiya/db'
 import { sql, desc, eq, and, ilike, or, gte, lte, asc, exists, type SQL } from 'drizzle-orm'
 import { Queue } from 'bullmq'
 import { env } from '@leadiya/config'
+
+const twogisEnrichJobOpts = { removeOnComplete: 200, removeOnFail: 500 } as const
 import { leadDetailFields, leadExportFields, leadListFields } from '../lib/lead-select.js'
 import type { AppEnv } from '../server.js'
 
@@ -14,6 +16,7 @@ const LEADS_OFFSET_MAX = 25_000
 const EXPORT_ROW_MAX = 3_000
 
 const enrichmentQueue = new Queue('enrichment', { connection: { url: env.REDIS_URL } })
+const twogisEnrichQueue = new Queue('enrich-twogis', { connection: { url: env.REDIS_URL } })
 
 /** Latin UI labels + DB spellings (2GIS stores Cyrillic city names). */
 const CITY_FILTER_ALIASES: Record<string, string[]> = {
@@ -227,14 +230,48 @@ companiesRouter.post('/:id/enrich', async (c) => {
     .from(companies)
     .where(eq(companies.id, id))
     .limit(1)
-  if (!company) return c.json({ error: 'Company not found', code: 'NOT_FOUND' }, 404)
+  if (!company) return c.json({ error: 'Lead not found', code: 'NOT_FOUND' }, 404)
+
+  let forceTwogis = false
+  const ct = c.req.header('content-type') || ''
+  if (ct.includes('application/json')) {
+    try {
+      const body = (await c.req.json()) as { forceTwogis?: boolean }
+      forceTwogis = Boolean(body?.forceTwogis)
+    } catch {
+      /* empty or invalid body */
+    }
+  }
 
   await enrichmentQueue.add('enrich', { leadIds: [id] }, { jobId: `enrich-single:${id}` })
-  return c.json({ message: 'Enrichment queued', leadId: id }, 202)
+
+  if (forceTwogis) {
+    await twogisEnrichQueue.add(
+      'enrich',
+      { leadId: id, force: true },
+      {
+        ...twogisEnrichJobOpts,
+        jobId: `twogis-force:${id}:${Date.now()}`,
+      }
+    )
+  }
+
+  return c.json(
+    {
+      message: 'Enrichment queued',
+      leadId: id,
+      ...(forceTwogis ? { twogisSearchReRun: true as const } : {}),
+    },
+    202
+  )
 })
 
 companiesRouter.post('/bulk-action', async (c) => {
-  const { ids, action } = (await c.req.json()) as { ids: string[]; action: string }
+  const { ids, action, forceTwogis } = (await c.req.json()) as {
+    ids: string[]
+    action: string
+    forceTwogis?: boolean
+  }
 
   if (!ids || !Array.isArray(ids) || ids.length === 0) {
     return c.json({ error: 'No IDs provided', code: 'VALIDATION_ERROR' }, 400)
@@ -254,7 +291,25 @@ companiesRouter.post('/bulk-action', async (c) => {
 
     case 'enrich':
       await enrichmentQueue.add('enrich', { leadIds: ids }, { jobId: `enrich-bulk:${Date.now()}` })
-      return c.json({ message: `Enrichment queued for ${ids.length} leads`, count: ids.length }, 202)
+      if (forceTwogis) {
+        const ts = Date.now()
+        for (let i = 0; i < ids.length; i++) {
+          const leadId = ids[i]!
+          await twogisEnrichQueue.add(
+            'enrich',
+            { leadId, force: true },
+            { ...twogisEnrichJobOpts, jobId: `twogis-force:${leadId}:${ts}:${i}` }
+          )
+        }
+      }
+      return c.json(
+        {
+          message: `Enrichment queued for ${ids.length} leads`,
+          count: ids.length,
+          ...(forceTwogis ? { twogisSearchReRunQueued: ids.length } : {}),
+        },
+        202
+      )
 
     default:
       return c.json({ error: 'Invalid action', code: 'VALIDATION_ERROR' }, 400)
