@@ -222,7 +222,7 @@ export async function scrapeCompanyDetail(page: Page, url: string): Promise<any>
         }
         // Reviews count like "123 отзыва" or "45 reviews"
         if (!reviewsNum) {
-          const rm = t.match(/^(\\d{1,6})\\s*(отзыв|review)/i);
+          const rm = t.match(/^(\\d{1,6})\\s*(отзывов|отзыва|отзыв|reviews?)\\b/i);
           if (rm) reviewsNum = parseInt(rm[1], 10);
         }
         if (ratingNum && reviewsNum) break;
@@ -306,10 +306,22 @@ export async function scrapeCompanyDetail(page: Page, url: string): Promise<any>
       .filter(isValidContact)
       .map(normalizeEmail)
       .filter(Boolean)
-    
+
+    // 2GIS often shows phone as tel: only (no wa.me button) — still useful for WhatsApp deep links
+    if (!details.whatsapp && details.phones?.length) {
+      const raw = details.phones[0] as string
+      const digits = raw.replace(/\D/g, '')
+      let d = digits
+      if (d.length === 11 && d.startsWith('8')) d = '7' + d.slice(1)
+      if (d.length === 10) d = '7' + d
+      if (d.length === 11 && d.startsWith('7')) {
+        details.whatsapp = `https://wa.me/${d}`
+      }
+    }
+
     // Clean up — don't store the full body text in memory
     delete details.bodyText
-    
+
     console.log(`  ✓ ${details.name} | Phones: ${details.phones.length} | Emails: ${details.emails.length}`)
     return details
   }, {
@@ -566,6 +578,8 @@ async function scrapeCityCategory(
         try {
           const leadId = deterministicId(normalizedName, city)
 
+          const primaryEmail = details.emails?.[0] || null
+
           const [lead] = await db
             .insert(leads)
             .values({
@@ -575,6 +589,7 @@ async function scrapeCityCategory(
               city,
               address: details.address,
               website: details.website,
+              email: primaryEmail,
               category,
               source: '2gis',
               sourceUrl: link,
@@ -600,6 +615,7 @@ async function scrapeCityCategory(
                 bin: details.bin || null,
                 address: details.address,
                 website: details.website,
+                email: primaryEmail,
                 whatsapp: details.whatsapp,
                 instagram: details.instagram,
                 telegram: details.telegram,
@@ -968,12 +984,15 @@ export async function enrichLeadFromTwogisSearch(
     const [fresh] = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1)
     const freshSources = (fresh?.enrichmentSources ?? sources) as Record<string, unknown>
 
+    const enrichPrimaryEmail = details.emails?.[0] || null
+
     await db
       .update(leads)
       .set({
         bin: fresh?.bin?.trim() ? fresh.bin : details.bin || null,
         address: fresh?.address?.trim() ? fresh.address : details.address || null,
         website: fresh?.website?.trim() ? fresh.website : details.website || null,
+        email: fresh?.email?.trim() ? fresh.email : enrichPrimaryEmail,
         whatsapp: fresh?.whatsapp || details.whatsapp || null,
         instagram: fresh?.instagram || details.instagram || null,
         telegram: fresh?.telegram || details.telegram || null,

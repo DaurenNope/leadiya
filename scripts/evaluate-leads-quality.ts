@@ -95,6 +95,18 @@ async function reportEducation(since: Date) {
       )
     )
 
+  const [emailContactsBatch] = await db
+    .select({ n: sql<number>`count(distinct ${contacts.leadId})::int` })
+    .from(contacts)
+    .innerJoin(leads, eq(contacts.leadId, leads.id))
+    .where(
+      and(
+        createdBatch,
+        isNotNull(contacts.email),
+        sql`trim(${contacts.email}) != ''`
+      )
+    )
+
   const byCity = await db
     .select({
       city: leads.city,
@@ -167,8 +179,9 @@ async function reportEducation(since: Date) {
   console.log(`  sourceUrl (2GIS card):  ${cUrl?.n ?? 0}  (${pct(cUrl?.n ?? 0, n)})`)
   console.log(`  website:                  ${cSite?.n ?? 0}  (${pct(cSite?.n ?? 0, n)})`)
   console.log(`  ≥1 phone in contacts:     ${phoneBatch?.n ?? 0}  (${pct(phoneBatch?.n ?? 0, n)})`)
-  console.log(`  email on lead:            ${cEmail?.n ?? 0}  (${pct(cEmail?.n ?? 0, n)})`)
-  console.log(`  whatsapp on lead:         ${cWa?.n ?? 0}  (${pct(cWa?.n ?? 0, n)})`)
+  console.log(`  ≥1 email in contacts:     ${emailContactsBatch?.n ?? 0}  (${pct(emailContactsBatch?.n ?? 0, n)})`)
+  console.log(`  email on lead row:        ${cEmail?.n ?? 0}  (${pct(cEmail?.n ?? 0, n)})  ← primary mailto (now backfilled when parsed)`)
+  console.log(`  whatsapp on lead (wa.me): ${cWa?.n ?? 0}  (${pct(cWa?.n ?? 0, n)})  ← explicit 2GIS wa link or tel→wa.me fallback (new scrapes)`)
   console.log(`  telegram on lead:         ${cTg?.n ?? 0}  (${pct(cTg?.n ?? 0, n)})`)
   console.log(`  2GIS rating text:         ${cRating?.n ?? 0}  (${pct(cRating?.n ?? 0, n)})`)
   console.log(`  reviews_count > 0:        ${cReviews?.n ?? 0}  (${pct(cReviews?.n ?? 0, n)})`)
@@ -216,6 +229,10 @@ async function reportEducation(since: Date) {
   if (phoneRate < 0.3) {
     console.log('  Phones: low vs HEI expectations — detail pages may need richer contact parsing or manual pass.')
   }
+  console.log(
+    '  Note: older runs stored phones only in `contacts` and left `leads.whatsapp` empty unless 2GIS showed a wa.me button.'
+  )
+  console.log('  Re-scrape or run enrich-twogis to refresh; new discovery runs get tel→wa.me + lead.email from first mailto.')
   console.log('══════════════════════════════════════════════════════════')
   console.log('')
 }

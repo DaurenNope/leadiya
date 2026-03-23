@@ -72,6 +72,13 @@ async function main() {
   if (result.runId) console.log(`scraper_run:   ${result.runId}`)
   console.log('')
   console.log(
+    'Speed: wall time is dominated by city×category slices, list pages, Playwright waits, and many skipped'
+  )
+  console.log(
+    'duplicates (detail opens still cost time). Try maxConcurrency 3–4 with skipProxy, fewer cities first, or raise limits after smoke.'
+  )
+  console.log('')
+  console.log(
     'Quality check: npx tsx --env-file=.env scripts/evaluate-leads-quality.ts --hours=72 --education'
   )
   console.log('══════════════════════════════════════')
