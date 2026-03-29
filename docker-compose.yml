@@ -7,6 +7,7 @@
 #   open http://localhost:8080
 #
 # API health: curl http://localhost:3001/health  (Compose maps host 3001 → container; local CLI dev uses PORT=3041 by default)
+# Workers: Baileys WhatsApp — set WHATSAPP_BAILEYS_ENABLED=true in .env, watch workers logs for QR (linked device).
 
 services:
   api:
@@ -19,6 +20,14 @@ services:
     # Keep container on 3001 even if .env sets PORT=3041 for local CLI dev.
     environment:
       PORT: "3001"
+
+  workers:
+    build:
+      context: .
+      target: workers
+    env_file: .env
+    depends_on:
+      - api
 
   dashboard:
     build:
