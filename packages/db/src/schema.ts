@@ -14,6 +14,8 @@ export const leads = pgTable('leads', {
   address: text('address'),
   website: text('website'),
   category: text('category'),
+  /** Rubric / category labels shown on the 2GIS card (not the discovery search slice). Joined with " · ". */
+  twogisCardCategory: text('twogis_card_category'),
   source: text('source'),
   sourceUrl: text('source_url'),
   email: text('email'),
@@ -105,6 +107,8 @@ export const outreachLog = pgTable('outreach_log', {
   body: text('body'),
   status: text('status'),
   sentAt: timestamp('sent_at'),
+  /** WhatsApp JID (e.g. 7...@s.whatsapp.net) for inbound rows when lead is unknown. */
+  waPeer: text('wa_peer'),
   ...timestamps,
 })
 
@@ -113,6 +117,14 @@ export const scraperRuns = pgTable('scraper_runs', {
   scraper: text('scraper').notNull(),
   status: text('status').notNull(),
   resultsCount: text('results_count'),
+  /** Total firm detail navigation attempts (includes attempts that were skipped due to duplicates or parsing failures). */
+  detailAttempts: integer('detail_attempts').default(0).notNull(),
+  /** Count of duplicates skipped (both by URL and by normalized name+city session de-dupe). */
+  totalSkipped: integer('total_skipped').default(0).notNull(),
+  /** Number of list pages processed that returned >=1 firm. */
+  listPagesCompleted: integer('list_pages_completed').default(0).notNull(),
+  /** Max consecutive pages with 0 firms (used to detect empty slice / blockage). */
+  emptyPageStreakMax: integer('empty_page_streak_max').default(0).notNull(),
   error: text('error'),
   startedAt: timestamp('started_at').defaultNow(),
   completedAt: timestamp('completed_at'),

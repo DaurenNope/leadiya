@@ -1,4 +1,9 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
+import { extractContextFrom2gisUrl } from '../../lib/2gis-context'
+import { dashboardUrlFromApi } from '../../lib/dashboard-url'
+import { DEFAULT_LOCAL_API_ORIGIN } from '../../lib/local-api-default'
+import { normalizeSpreadsheetId } from '../../lib/sink-settings'
+import './popup.css'
 
 const CITIES = [
   'Алматы', 'Астана', 'Шымкент', 'Караганда', 'Актобе', 'Тараз', 'Павлодар',
@@ -19,37 +24,64 @@ const CITY_SLUGS: Record<string, string> = {
 }
 
 type PageType = { isFirm: boolean; isSearch: boolean; url: string }
-type Status = { sessionCount: number; lastSyncTime: string | null; queueSize: number }
+type EventItem = { at: string; level: 'info' | 'warn' | 'error'; message: string }
+type Status = {
+  sessionCount: number
+  lastSyncTime: string | null
+  queueSize: number
+  flushFailures?: number
+  lastError?: string | null
+  recentEvents?: EventItem[]
+  bulkRunning?: boolean
+  bulkDone?: number
+  bulkTotal?: number
+  autoCaptures?: number
+  lastAutoCaptureAt?: string | null
+  lastEnrichmentAt?: string | null
+  lastEnrichmentStatus?: 'idle' | 'success' | 'warn'
+  cityMismatchCount?: number
+  lastCityMismatchAt?: string | null
+}
 
-const s = {
-  body: { width: 400, minHeight: 480, background: '#111', color: '#e5e5e5', fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, margin: 0, padding: 0 } as React.CSSProperties,
-  header: { padding: '14px 16px', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center', gap: 10 } as React.CSSProperties,
-  logo: { fontSize: 16, fontWeight: 700, color: '#10b981', letterSpacing: -0.5 } as React.CSSProperties,
-  badge: { marginLeft: 'auto', background: '#10b981', color: '#000', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600 } as React.CSSProperties,
-  section: { padding: '12px 16px', borderBottom: '1px solid #1a1a1a' } as React.CSSProperties,
-  sectionTitle: { fontSize: 10, textTransform: 'uppercase' as const, letterSpacing: 1.5, color: '#666', marginBottom: 8 },
-  input: { width: '100%', padding: '8px 10px', background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, color: '#e5e5e5', fontSize: 12, outline: 'none', boxSizing: 'border-box' as const },
-  select: { width: '100%', padding: '8px 10px', background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, color: '#e5e5e5', fontSize: 12, outline: 'none', boxSizing: 'border-box' as const },
-  btn: { width: '100%', padding: '10px', background: '#10b981', color: '#000', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' } as React.CSSProperties,
-  btnSecondary: { width: '100%', padding: '10px', background: '#222', color: '#ccc', border: '1px solid #333', borderRadius: 6, fontSize: 13, cursor: 'pointer' } as React.CSSProperties,
-  row: { display: 'flex', gap: 8, marginBottom: 8 } as React.CSSProperties,
-  statusRow: { display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 12, color: '#888' } as React.CSSProperties,
-  statusVal: { color: '#10b981', fontWeight: 600 } as React.CSSProperties,
-  toggle: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } as React.CSSProperties,
-  msg: (ok: boolean) => ({ padding: '8px 10px', borderRadius: 6, fontSize: 12, marginTop: 8, background: ok ? '#052e16' : '#3b0000', color: ok ? '#4ade80' : '#f87171' }) as React.CSSProperties,
+function Switch({ checked, onChange }: { checked: boolean; onChange: () => void }) {
+  return (
+    <label className="ly-switch">
+      <input type="checkbox" checked={checked} onChange={() => onChange()} />
+      <span className="ly-switch-slider" />
+    </label>
+  )
 }
 
 export default function App() {
-  const [apiUrl, setApiUrl] = useState('http://localhost:3001')
+  const [apiUrl, setApiUrl] = useState(DEFAULT_LOCAL_API_ORIGIN)
   const [city, setCity] = useState('Алматы')
-  const [category, setCategory] = useState('')
-  const [directUrl, setDirectUrl] = useState('')
+  const [category, setCategory] = useState('кафе')
   const [autoMode, setAutoMode] = useState(false)
+  const [websiteFollow, setWebsiteFollow] = useState(true)
+  const [dockEnabled, setDockEnabled] = useState(true)
+  const [sinkApiEnabled, setSinkApiEnabled] = useState(true)
+  const [apiServiceKey, setApiServiceKey] = useState('')
+  const [sinkWebhookEnabled, setSinkWebhookEnabled] = useState(false)
+  const [webhookUrl, setWebhookUrl] = useState('')
+  const [webhookSecret, setWebhookSecret] = useState('')
+  const [sinkSheetsEnabled, setSinkSheetsEnabled] = useState(false)
+  const [spreadsheetId, setSpreadsheetId] = useState('')
+  const [sheetsRange, setSheetsRange] = useState('Sheet1!A1')
+  const [bulkMaxPages, setBulkMaxPages] = useState(3)
   const [status, setStatus] = useState<Status>({ sessionCount: 0, lastSyncTime: null, queueSize: 0 })
   const [pageType, setPageType] = useState<PageType | null>(null)
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null)
+  const [websiteBusy, setWebsiteBusy] = useState(false)
+  const [tab, setTab] = useState<'home' | 'settings'>('home')
+  const [apiHealth, setApiHealth] = useState<'ok' | 'error' | 'checking' | null>(null)
+  const [version, setVersion] = useState('')
+
+  const flash = useCallback((text: string, ok: boolean) => {
+    setMessage({ text, ok })
+    setTimeout(() => setMessage(null), 2800)
+  }, [])
 
   const refreshStatus = useCallback(() => {
     chrome.runtime.sendMessage({ action: 'getStatus' }, (resp) => {
@@ -65,63 +97,210 @@ export default function App() {
           setPageType(null)
           return
         }
-        if (resp) setPageType(resp)
+        if (resp) {
+          setPageType(resp)
+          if (resp.isSearch && typeof resp.url === 'string') {
+            try {
+              const u = new URL(resp.url)
+              const m = u.pathname.match(/\/search\/([^/]+)/)
+              if (m?.[1]) {
+                const q = decodeURIComponent(m[1]).trim()
+                if (q && (!category || category.trim().length === 0)) setCategory(q)
+              }
+            } catch {
+              // ignore
+            }
+          }
+        }
       })
     })
+  }, [category])
+
+  const checkApiHealth = useCallback(() => {
+    setApiHealth('checking')
+    const url = `${apiUrl.replace(/\/$/, '')}/health`
+    fetch(url, { method: 'GET' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((j) => {
+        setApiHealth(j?.status === 'ok' ? 'ok' : 'error')
+      })
+      .catch(() => setApiHealth('error'))
+  }, [apiUrl])
+
+  useEffect(() => {
+    try {
+      setVersion(chrome.runtime.getManifest?.()?.version ?? '')
+    } catch {
+      setVersion('')
+    }
   }, [])
 
   useEffect(() => {
-    chrome.storage.local.get(['apiUrl', 'autoMode'], (result) => {
-      if (result.apiUrl) setApiUrl(result.apiUrl)
-      if (result.autoMode !== undefined) setAutoMode(result.autoMode)
-    })
+    if (sinkApiEnabled) checkApiHealth()
+  }, [checkApiHealth, sinkApiEnabled])
+
+  useEffect(() => {
+    chrome.storage.local.get(
+      [
+        'apiUrl',
+        'autoMode',
+        'websiteFollow',
+        'bulkMaxPages',
+        'dockEnabled',
+        'sinkApiEnabled',
+        'apiServiceKey',
+        'sinkWebhookEnabled',
+        'webhookUrl',
+        'webhookSecret',
+        'sinkSheetsEnabled',
+        'spreadsheetId',
+        'sheetsRange',
+      ],
+      (result) => {
+        if (result.apiUrl) setApiUrl(result.apiUrl)
+        if (result.autoMode !== undefined) setAutoMode(result.autoMode)
+        if (result.websiteFollow !== undefined) setWebsiteFollow(Boolean(result.websiteFollow))
+        if (result.dockEnabled !== undefined) setDockEnabled(Boolean(result.dockEnabled))
+        if (result.sinkApiEnabled !== undefined) setSinkApiEnabled(Boolean(result.sinkApiEnabled))
+        if (typeof result.apiServiceKey === 'string') setApiServiceKey(result.apiServiceKey)
+        if (result.sinkWebhookEnabled !== undefined) setSinkWebhookEnabled(Boolean(result.sinkWebhookEnabled))
+        if (typeof result.webhookUrl === 'string') setWebhookUrl(result.webhookUrl)
+        if (typeof result.webhookSecret === 'string') setWebhookSecret(result.webhookSecret)
+        if (result.sinkSheetsEnabled !== undefined) setSinkSheetsEnabled(Boolean(result.sinkSheetsEnabled))
+        if (typeof result.spreadsheetId === 'string') setSpreadsheetId(result.spreadsheetId)
+        if (typeof result.sheetsRange === 'string' && result.sheetsRange.trim()) setSheetsRange(result.sheetsRange.trim())
+        if (typeof result.bulkMaxPages === 'number' && Number.isFinite(result.bulkMaxPages)) {
+          setBulkMaxPages(Math.max(1, Math.min(20, Math.floor(result.bulkMaxPages))))
+        }
+        const savedCity = (result as { selectedCity?: string }).selectedCity
+        const savedCategory = (result as { selectedCategory?: string }).selectedCategory
+        if (savedCity) setCity(savedCity)
+        if (savedCategory) setCategory(savedCategory)
+      }
+    )
     refreshStatus()
     detectPage()
-    const interval = setInterval(refreshStatus, 2000)
 
-    const progressListener = (msg: any) => {
-      if (msg.action === 'bulkProgress') {
+    const id = setInterval(() => {
+      refreshStatus()
+      detectPage()
+    }, 2500)
+
+    const progressListener = (msg: { action?: string; done?: number; total?: number }) => {
+      if (msg.action === 'bulkProgress' && msg.done !== undefined && msg.total !== undefined) {
         setBulkProgress({ done: msg.done, total: msg.total })
       }
     }
     chrome.runtime.onMessage.addListener(progressListener)
 
     return () => {
-      clearInterval(interval)
+      clearInterval(id)
       chrome.runtime.onMessage.removeListener(progressListener)
     }
   }, [refreshStatus, detectPage])
 
+  useEffect(() => {
+    chrome.storage.local.set({ selectedCity: city })
+  }, [city])
+
+  useEffect(() => {
+    chrome.storage.local.set({ selectedCategory: category })
+  }, [category])
+
+  useEffect(() => {
+    chrome.storage.local.set({ bulkMaxPages })
+  }, [bulkMaxPages])
+
+  useEffect(() => {
+    chrome.storage.local.set({ dockEnabled })
+  }, [dockEnabled])
+
+  useEffect(() => {
+    chrome.storage.local.set({ sinkApiEnabled })
+  }, [sinkApiEnabled])
+
+  useEffect(() => {
+    chrome.storage.local.set({ apiServiceKey })
+  }, [apiServiceKey])
+
+  useEffect(() => {
+    chrome.storage.local.set({ sinkWebhookEnabled })
+  }, [sinkWebhookEnabled])
+
+  useEffect(() => {
+    chrome.storage.local.set({ webhookUrl })
+  }, [webhookUrl])
+
+  useEffect(() => {
+    chrome.storage.local.set({ webhookSecret })
+  }, [webhookSecret])
+
+  useEffect(() => {
+    chrome.storage.local.set({ sinkSheetsEnabled })
+  }, [sinkSheetsEnabled])
+
+  useEffect(() => {
+    chrome.storage.local.set({ spreadsheetId })
+  }, [spreadsheetId])
+
+  useEffect(() => {
+    chrome.storage.local.set({ sheetsRange })
+  }, [sheetsRange])
+
   const saveApiUrl = () => {
     chrome.storage.local.set({ apiUrl })
-    flash('API URL saved', true)
+    flash('Адрес API сохранен', true)
   }
 
   const toggleAutoMode = () => {
     const next = !autoMode
     setAutoMode(next)
     chrome.storage.local.set({ autoMode: next })
-    flash(next ? 'Auto-mode ON' : 'Auto-mode OFF', true)
+    flash(next ? 'Автопилот включен' : 'Автопилот выключен', true)
   }
 
-  const flash = (text: string, ok: boolean) => {
-    setMessage({ text, ok })
-    setTimeout(() => setMessage(null), 3000)
+  const toggleWebsiteFollow = () => {
+    const next = !websiteFollow
+    setWebsiteFollow(next)
+    chrome.storage.local.set({ websiteFollow: next })
+    flash(next ? 'Сбор с сайта включен' : 'Сбор с сайта выключен', true)
+  }
+
+  const toggleDock = () => {
+    const next = !dockEnabled
+    setDockEnabled(next)
+    chrome.storage.local.set({ dockEnabled: next })
+    flash(next ? 'Панель на 2GIS включена' : 'Панель на 2GIS скрыта', true)
+  }
+
+  const withActiveTab = (cb: (tabId: number) => void) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (!tabs[0]?.id) {
+        flash('Не удалось получить активную вкладку', false)
+        return
+      }
+      cb(tabs[0].id)
+    })
   }
 
   const handleScrapeCurrentPage = () => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (!tabs[0]?.id) return
+    const fromPage = extractContextFrom2gisUrl(pageType?.url || '')
+    withActiveTab((tabId) => {
       setBusy(true)
       chrome.runtime.sendMessage(
-        { action: 'manualExtract', tabId: tabs[0].id, city, category },
+        {
+          action: 'manualExtract',
+          tabId,
+          city: fromPage.city || city,
+          category: fromPage.category || undefined,
+        },
         (resp) => {
           setBusy(false)
           if (resp?.ok) {
-            flash(`Extracted: ${resp.lead.name}`, true)
+            flash(`Сохранено: ${resp.lead?.name || 'компания'}`, true)
             refreshStatus()
           } else {
-            flash(resp?.error || 'Extraction failed', false)
+            flash(resp?.error || 'Не удалось извлечь данные', false)
           }
         }
       )
@@ -129,180 +308,612 @@ export default function App() {
   }
 
   const handleBulkScrape = () => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (!tabs[0]?.id) return
+    if (!window.confirm('Начать массовый сбор компаний с этой страницы?')) return
+    const fromPage = extractContextFrom2gisUrl(pageType?.url || '')
+    withActiveTab((tabId) => {
       setBusy(true)
       setBulkProgress({ done: 0, total: 0 })
       chrome.runtime.sendMessage(
-        { action: 'bulkScrape', tabId: tabs[0].id, city, category },
+        {
+          action: 'bulkScrape',
+          tabId,
+          city: fromPage.city || city,
+          category: fromPage.category || category,
+          maxPages: bulkMaxPages,
+        },
         (resp) => {
           setBusy(false)
           setBulkProgress(null)
           if (resp?.ok) {
-            flash(`Bulk scrape done: ${resp.extracted} leads`, true)
+            flash(`Массовый сбор завершен: ${resp.extracted} лидов`, true)
             refreshStatus()
           } else {
-            flash('Bulk scrape failed', false)
+            flash(resp?.error || 'Ошибка массового сбора', false)
           }
         }
       )
     })
   }
 
-  const handleNavigateAndScrape = () => {
-    if (!directUrl && !category) return
-    const url = directUrl || `https://2gis.kz/${CITY_SLUGS[city] || 'almaty'}/search/${encodeURIComponent(category)}`
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (!tabs[0]?.id) return
-      chrome.tabs.update(tabs[0].id, { url })
-      flash('Navigating... use Scrape after page loads', true)
+  const handleStopBulk = () => {
+    if (!window.confirm('Остановить массовый сбор?')) return
+    chrome.runtime.sendMessage({ action: 'stopBulk' }, () => {
+      flash('Останавливаю сбор… дождитесь завершения текущей карточки', true)
+      refreshStatus()
+    })
+  }
+
+  const handleWebsiteFollow = () => {
+    const fromPage = extractContextFrom2gisUrl(pageType?.url || '')
+    withActiveTab((tabId) => {
+      setWebsiteBusy(true)
+      chrome.runtime.sendMessage(
+        {
+          action: 'websiteFollowOnly',
+          tabId,
+          city: fromPage.city || city,
+          category: fromPage.category || undefined,
+        },
+        (resp) => {
+          setWebsiteBusy(false)
+          if (resp?.ok) {
+            flash('Дособор сайта выполнен', true)
+            refreshStatus()
+          } else {
+            flash(resp?.error || 'Ошибка дособора сайта', false)
+          }
+        }
+      )
+    })
+  }
+
+  const handleOpenSearch = () => {
+    if (!category.trim()) {
+      flash('Введите категорию для поиска', false)
+      return
+    }
+    const slug = CITY_SLUGS[city] || 'almaty'
+    const url = `https://2gis.kz/${slug}/search/${encodeURIComponent(category.trim())}`
+    withActiveTab((tabId) => {
+      chrome.tabs.update(tabId, { url })
+      flash('Открываю поиск 2GIS…', true)
     })
   }
 
   const formatTime = (iso: string | null) => {
-    if (!iso) return 'Never'
-    const d = new Date(iso)
-    return d.toLocaleTimeString()
+    if (!iso) return '—'
+    return new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+  }
+
+  const pageLabel =
+    pageType?.isFirm ? 'Карточка' : pageType?.isSearch ? 'Поиск' : 'Не 2GIS'
+  const pageOk = Boolean(pageType?.isFirm || pageType?.isSearch)
+
+  const bulkDone = status.bulkDone ?? bulkProgress?.done ?? 0
+  const bulkTotal = status.bulkTotal ?? bulkProgress?.total ?? 0
+  const bulkPercent = bulkTotal > 0 ? (bulkDone / bulkTotal) * 100 : 0
+
+  const handleCopyDiagnostics = () => {
+    const payload = {
+      pageType,
+      status,
+      settings: {
+        autoMode,
+        websiteFollow,
+        bulkMaxPages,
+        apiUrl,
+        city,
+        category,
+        dockEnabled,
+        sinkApiEnabled,
+        sinkWebhookEnabled,
+        sinkSheetsEnabled,
+      },
+      at: new Date().toISOString(),
+    }
+    navigator.clipboard
+      .writeText(JSON.stringify(payload, null, 2))
+      .then(() => flash('Диагностика скопирована', true))
+      .catch(() => flash('Не удалось скопировать диагностику', false))
+  }
+
+  const openDashboard = () => {
+    const dash = dashboardUrlFromApi(apiUrl)
+    chrome.tabs.create({ url: dash })
+  }
+
+  const exportLocal = (format: 'csv' | 'json') => {
+    chrome.runtime.sendMessage({ action: 'exportLeads', format }, (r) => {
+      if (chrome.runtime.lastError) {
+        flash(chrome.runtime.lastError.message || 'Ошибка', false)
+        return
+      }
+      if (r?.ok) flash(format === 'csv' ? 'CSV: сохранение файла…' : 'JSON: сохранение файла…', true)
+      else flash(r?.error || 'Ошибка экспорта', false)
+    })
   }
 
   return (
-    <div style={s.body}>
-      <div style={s.header}>
-        <span style={s.logo}>Leadiya</span>
-        <span style={{ fontSize: 11, color: '#666' }}>Lead Scraper</span>
-        <span style={s.badge}>{status.sessionCount}</span>
-      </div>
-
-      {/* Status */}
-      <div style={s.section}>
-        <div style={s.statusRow}>
-          <span>Leads this session</span>
-          <span style={s.statusVal}>{status.sessionCount}</span>
-        </div>
-        <div style={s.statusRow}>
-          <span>Queue</span>
-          <span style={s.statusVal}>{status.queueSize}</span>
-        </div>
-        <div style={s.statusRow}>
-          <span>Last sync</span>
-          <span style={{ color: '#aaa' }}>{formatTime(status.lastSyncTime)}</span>
-        </div>
-        {pageType && (
-          <div style={s.statusRow}>
-            <span>Current page</span>
-            <span style={{ color: pageType.isFirm ? '#10b981' : pageType.isSearch ? '#facc15' : '#666' }}>
-              {pageType.isFirm ? 'Firm page' : pageType.isSearch ? 'Search page' : 'Other'}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* Quick Scrape */}
-      <div style={s.section}>
-        <div style={s.sectionTitle}>Quick Scrape</div>
-        <div style={s.row}>
-          <select style={{ ...s.select, flex: 1 }} value={city} onChange={(e) => setCity(e.target.value)}>
-            {CITIES.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </div>
-        <div style={{ marginBottom: 8 }}>
-          <input
-            style={s.input}
-            placeholder="Category (e.g. IT-компании)"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-          />
-        </div>
-        <div style={{ marginBottom: 8 }}>
-          <input
-            style={s.input}
-            placeholder="Or paste 2GIS URL directly"
-            value={directUrl}
-            onChange={(e) => setDirectUrl(e.target.value)}
-          />
-        </div>
-
-        {pageType?.isFirm && (
-          <button style={s.btn} disabled={busy} onClick={handleScrapeCurrentPage}>
-            {busy ? 'Extracting...' : 'Extract This Firm'}
-          </button>
-        )}
-
-        {pageType?.isSearch && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <button style={s.btn} disabled={busy} onClick={handleBulkScrape}>
-              {busy
-                ? bulkProgress
-                  ? `Scraping ${bulkProgress.done}/${bulkProgress.total}...`
-                  : 'Starting bulk...'
-                : 'Bulk Scrape All Firms'}
-            </button>
-          </div>
-        )}
-
-        {!pageType?.isFirm && !pageType?.isSearch && (
-          <button
-            style={s.btn}
-            disabled={!category && !directUrl}
-            onClick={handleNavigateAndScrape}
-          >
-            Navigate to 2GIS
-          </button>
-        )}
-
-        {message && <div style={s.msg(message.ok)}>{message.text}</div>}
-      </div>
-
-      {/* Auto-mode */}
-      <div style={s.section}>
-        <div style={s.toggle}>
+    <div className="ly-app">
+      <header className="ly-header">
+        <div className="ly-brand-row">
           <div>
-            <div style={{ fontWeight: 600, marginBottom: 2 }}>Auto-extract mode</div>
-            <div style={{ fontSize: 11, color: '#666' }}>Auto-capture when visiting firm pages</div>
+            <h1 className="ly-wordmark">Leadiya</h1>
+            <p className="ly-tagline">Лиды из 2GIS в вашу CRM</p>
           </div>
-          <label style={{ position: 'relative', display: 'inline-block', width: 40, height: 22 }}>
-            <input
-              type="checkbox"
-              checked={autoMode}
-              onChange={toggleAutoMode}
-              style={{ opacity: 0, width: 0, height: 0 }}
-            />
-            <span
-              style={{
-                position: 'absolute', cursor: 'pointer', inset: 0, borderRadius: 11,
-                background: autoMode ? '#10b981' : '#333',
-                transition: 'background 0.2s',
-              }}
-            >
-              <span
-                style={{
-                  position: 'absolute', height: 16, width: 16, left: autoMode ? 20 : 4, bottom: 3,
-                  background: '#fff', borderRadius: '50%', transition: 'left 0.2s',
+          <div className={`ly-page-badge ${pageOk ? 'ly-page-badge--on' : 'ly-page-badge--off'}`}>
+            {pageLabel}
+          </div>
+        </div>
+        <nav className="ly-tabs" aria-label="Разделы">
+          <button
+            type="button"
+            className={`ly-tab ${tab === 'home' ? 'ly-tab--active' : ''}`}
+            onClick={() => setTab('home')}
+          >
+            Главная
+          </button>
+          <button
+            type="button"
+            className={`ly-tab ${tab === 'settings' ? 'ly-tab--active' : ''}`}
+            onClick={() => setTab('settings')}
+          >
+            Настройки
+          </button>
+        </nav>
+      </header>
+
+      <div className="ly-scroll">
+        {tab === 'home' ? (
+          <>
+            {status.bulkRunning ? (
+              <div className="ly-banner ly-banner--warn">
+                Сбор идет: {bulkDone}/{bulkTotal}. Остановить можно красной кнопкой ниже.
+              </div>
+            ) : status.lastError ? (
+              <div className="ly-banner ly-banner--err">Ошибка: {status.lastError}</div>
+            ) : (
+              <div className="ly-banner ly-banner--ok">Связь с расширением активна. Выберите действие ниже.</div>
+            )}
+
+            <section className="ly-section">
+              <h2 className="ly-section-title">Панель и API</h2>
+              <div className="ly-panel">
+                <div className="ly-connect-row">
+                  <div className="ly-connect-meta">
+                    <div style={{ fontSize: 12, fontWeight: 700 }}>Подключение</div>
+                    <div className="ly-api-line">{apiUrl.replace(/^https?:\/\//, '')}</div>
+                    {sinkApiEnabled ? (
+                      <div className="ly-health">
+                        <span
+                          className={`ly-health-dot ${
+                            apiHealth === 'ok' ? 'ly-health-dot--ok' : apiHealth === 'error' ? 'ly-health-dot--err' : ''
+                          }`}
+                        />
+                        {apiHealth === 'checking'
+                          ? 'Проверка…'
+                          : apiHealth === 'ok'
+                            ? 'API в сети'
+                            : apiHealth === 'error'
+                              ? 'API недоступен'
+                              : '—'}
+                      </div>
+                    ) : (
+                      <div className="ly-health" style={{ color: 'var(--ly-muted)' }}>
+                        Канал Leadiya API выключен в настройках
+                      </div>
+                    )}
+                  </div>
+                  <div className="ly-actions-col">
+                    <button type="button" className="ly-btn ly-btn--ghost" onClick={openDashboard}>
+                      Открыть CRM
+                    </button>
+                    {sinkApiEnabled ? (
+                      <button type="button" className="ly-btn ly-btn--ghost" onClick={checkApiHealth}>
+                        Проверить API
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="ly-section">
+              <h2 className="ly-section-title">Сессия</h2>
+              <div className="ly-stat-grid">
+                <div className="ly-stat">
+                  <span className="ly-stat-val">{status.sessionCount}</span>
+                  <span className="ly-stat-label">За сессию</span>
+                </div>
+                <div className="ly-stat">
+                  <span className="ly-stat-val" style={{ color: status.bulkRunning ? 'var(--ly-warn)' : 'var(--ly-success)' }}>
+                    {status.bulkRunning ? '●' : '○'}
+                  </span>
+                  <span className="ly-stat-label">Массовый</span>
+                </div>
+                <div className="ly-stat">
+                  <span className="ly-stat-val">{status.queueSize}</span>
+                  <span className="ly-stat-label">В очереди</span>
+                </div>
+              </div>
+              {status.bulkRunning ? (
+                <div className="ly-bulk-msg">
+                  Фоновый режим: можно закрыть это окно — сбор продолжится.
+                </div>
+              ) : null}
+              {status.lastError ? (
+                <div className="ly-toast ly-toast--err" style={{ marginTop: 10 }}>
+                  {status.lastError}
+                </div>
+              ) : null}
+              {status.queueSize > 0 ? (
+                <div className="ly-inline-row" style={{ marginTop: 12 }}>
+                  <button type="button" className="ly-btn ly-btn--ghost" onClick={() => exportLocal('csv')}>
+                    Скачать CSV
+                  </button>
+                  <button type="button" className="ly-btn ly-btn--ghost" onClick={() => exportLocal('json')}>
+                    Скачать JSON
+                  </button>
+                </div>
+              ) : null}
+            </section>
+
+            <section className="ly-section">
+              <h2 className="ly-section-title">Действие</h2>
+              <div className="ly-cta-wrap">
+                <div className="ly-cta-inner">
+                  {status.bulkRunning ? (
+                    <button type="button" className="ly-btn ly-btn--danger" onClick={handleStopBulk}>
+                      Остановить сбор
+                    </button>
+                  ) : pageType?.isFirm ? (
+                    <button type="button" className="ly-btn ly-btn--primary" disabled={busy} onClick={handleScrapeCurrentPage}>
+                      {busy ? 'Собираю…' : 'Собрать эту компанию'}
+                    </button>
+                  ) : pageType?.isSearch ? (
+                    <button type="button" className="ly-btn ly-btn--primary" disabled={busy} onClick={handleBulkScrape}>
+                      {busy ? 'Запуск…' : 'Собрать список на странице'}
+                    </button>
+                  ) : (
+                    <button type="button" className="ly-btn ly-btn--primary" onClick={handleOpenSearch}>
+                      Открыть 2GIS и начать
+                    </button>
+                  )}
+                  <p className="ly-cta-hint">
+                    {status.bulkRunning
+                      ? `Прогресс: ${bulkDone} / ${bulkTotal}`
+                      : pageType?.isFirm
+                        ? 'Сохранит карточку в Leadiya (с дособором сайта, если включен).'
+                        : pageType?.isSearch
+                          ? 'Обойдет карточки в выдаче и поставит лиды в очередь.'
+                          : 'Откроет поиск по городу и категории из настроек.'}
+                  </p>
+                  {status.bulkRunning ? (
+                    <div className="ly-progress">
+                      <i style={{ width: `${bulkPercent}%` }} />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              {message ? (
+                <div className={`ly-toast ${message.ok ? 'ly-toast--ok' : 'ly-toast--err'}`}>{message.text}</div>
+              ) : null}
+            </section>
+
+            <section className="ly-section">
+              <h2 className="ly-section-title">Как это работает</h2>
+              <ul className="ly-steps">
+                <li>Откройте 2GIS: карточку компании или поиск.</li>
+                <li>Нажмите главную кнопку выше — данные уйдут в CRM.</li>
+                <li>На странице 2GIS можно пользоваться быстрой панелью Leadiya (включите в настройках).</li>
+              </ul>
+            </section>
+          </>
+        ) : (
+          <>
+            <section className="ly-section">
+              <h2 className="ly-section-title">Куда отправлять лиды</h2>
+              <p className="ly-field-hint">
+                Включите один или несколько каналов. Без каналов лиды остаются в очереди — используйте экспорт в файл.
+              </p>
+              <div className="ly-panel">
+                <div className="ly-toggle">
+                  <div>
+                    <div className="ly-toggle-title">Leadiya API</div>
+                    <div className="ly-toggle-desc">Сервер CRM (POST /api/leads/bulk)</div>
+                  </div>
+                  <Switch
+                    checked={sinkApiEnabled}
+                    onChange={() => {
+                      const n = !sinkApiEnabled
+                      setSinkApiEnabled(n)
+                      chrome.storage.local.set({ sinkApiEnabled: n })
+                    }}
+                  />
+                </div>
+                <div className="ly-toggle">
+                  <div>
+                    <div className="ly-toggle-title">Webhook</div>
+                    <div className="ly-toggle-desc">Zapier, Make, свой backend (JSON)</div>
+                  </div>
+                  <Switch
+                    checked={sinkWebhookEnabled}
+                    onChange={() => {
+                      const n = !sinkWebhookEnabled
+                      setSinkWebhookEnabled(n)
+                      chrome.storage.local.set({ sinkWebhookEnabled: n })
+                    }}
+                  />
+                </div>
+                <div className="ly-toggle">
+                  <div>
+                    <div className="ly-toggle-title">Google Таблицы</div>
+                    <div className="ly-toggle-desc">Добавление строк через Google API (нужен OAuth в сборке)</div>
+                  </div>
+                  <Switch
+                    checked={sinkSheetsEnabled}
+                    onChange={() => {
+                      const n = !sinkSheetsEnabled
+                      setSinkSheetsEnabled(n)
+                      chrome.storage.local.set({ sinkSheetsEnabled: n })
+                    }}
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section className="ly-section">
+              <h2 className="ly-section-title">Leadiya API</h2>
+              <p className="ly-field-hint">Базовый URL и опционально ключ X-Leadiya-Service-Key (как LEADIYA_AGENT_SERVICE_KEY на сервере)</p>
+              <div className="ly-inline-row">
+                <input
+                  className="ly-input"
+                  value={apiUrl}
+                  onChange={(e) => setApiUrl(e.target.value)}
+                  placeholder="http://localhost:3041"
+                />
+                <button type="button" className="ly-btn ly-btn--ghost" style={{ width: 'auto' }} onClick={saveApiUrl}>
+                  Сохранить
+                </button>
+              </div>
+              <input
+                className="ly-input"
+                style={{ marginTop: 8 }}
+                value={apiServiceKey}
+                onChange={(e) => setApiServiceKey(e.target.value)}
+                placeholder="Сервисный ключ (если требуется)"
+                type="password"
+                autoComplete="off"
+              />
+            </section>
+
+            <section className="ly-section">
+              <h2 className="ly-section-title">Webhook</h2>
+              <p className="ly-field-hint">POST JSON: source, sentAt, leads[]. Опционально HMAC SHA-256 в X-Leadiya-Signature</p>
+              <input
+                className="ly-input"
+                value={webhookUrl}
+                onChange={(e) => setWebhookUrl(e.target.value)}
+                placeholder="https://hooks.zapier.com/..."
+              />
+              <input
+                className="ly-input"
+                style={{ marginTop: 8 }}
+                value={webhookSecret}
+                onChange={(e) => setWebhookSecret(e.target.value)}
+                placeholder="Секрет для подписи (необязательно)"
+                type="password"
+                autoComplete="off"
+              />
+            </section>
+
+            <section className="ly-section">
+              <h2 className="ly-section-title">Google Sheets</h2>
+              <p className="ly-field-hint">
+                ID таблицы или полная ссылка. Сборка с WXT_GOOGLE_CLIENT_ID добавляет OAuth2 в манифест.
+              </p>
+              <input
+                className="ly-input"
+                value={spreadsheetId}
+                onChange={(e) => setSpreadsheetId(normalizeSpreadsheetId(e.target.value))}
+                placeholder="1abc... или URL таблицы"
+              />
+              <input
+                className="ly-input"
+                style={{ marginTop: 8 }}
+                value={sheetsRange}
+                onChange={(e) => setSheetsRange(e.target.value)}
+                placeholder="Sheet1!A1"
+              />
+            </section>
+
+            <section className="ly-section">
+              <h2 className="ly-section-title">Локальный файл</h2>
+              <p className="ly-field-hint">Скачать текущую очередь лидов (очередь не очищается)</p>
+              <div className="ly-inline-row">
+                <button type="button" className="ly-btn ly-btn--ghost" onClick={() => exportLocal('csv')}>
+                  Экспорт CSV
+                </button>
+                <button type="button" className="ly-btn ly-btn--ghost" onClick={() => exportLocal('json')}>
+                  Экспорт JSON
+                </button>
+              </div>
+            </section>
+
+            <section className="ly-section">
+              <h2 className="ly-section-title">Поиск по умолчанию</h2>
+              <p className="ly-field-hint">Если вы не на 2GIS — для кнопки «Открыть 2GIS» на главной</p>
+              <select className="ly-select" value={city} onChange={(e) => setCity(e.target.value)}>
+                {CITIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="ly-input"
+                style={{ marginTop: 8 }}
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                placeholder="Категория (например кафе)"
+              />
+            </section>
+
+            <section className="ly-section">
+              <h2 className="ly-section-title">Массовый сбор</h2>
+              <p className="ly-field-hint">Сколько страниц списка обходить при сборе</p>
+              <input
+                className="ly-input"
+                type="number"
+                min={1}
+                max={20}
+                value={bulkMaxPages}
+                onChange={(e) => {
+                  const n = Number(e.target.value || 1)
+                  setBulkMaxPages(Math.max(1, Math.min(20, Number.isFinite(n) ? Math.floor(n) : 1)))
                 }}
               />
-            </span>
-          </label>
-        </div>
+            </section>
+
+            <section className="ly-section">
+              <h2 className="ly-section-title">Поведение</h2>
+              <div className="ly-panel">
+                <div className="ly-toggle">
+                  <div>
+                    <div className="ly-toggle-title">Автопилот</div>
+                    <div className="ly-toggle-desc">Автосбор при открытии карточек компании</div>
+                  </div>
+                  <Switch checked={autoMode} onChange={toggleAutoMode} />
+                </div>
+                <div className="ly-toggle">
+                  <div>
+                    <div className="ly-toggle-title">Дособор с сайта</div>
+                    <div className="ly-toggle-desc">Email и телефоны с сайта после 2GIS</div>
+                  </div>
+                  <Switch checked={websiteFollow} onChange={toggleWebsiteFollow} />
+                </div>
+                <div className="ly-toggle">
+                  <div>
+                    <div className="ly-toggle-title">Панель на 2GIS</div>
+                    <div className="ly-toggle-desc">Компактная панель на странице карт — быстрый сбор без popup</div>
+                  </div>
+                  <Switch checked={dockEnabled} onChange={toggleDock} />
+                </div>
+              </div>
+              {pageType?.isFirm && !status.bulkRunning ? (
+                <button
+                  type="button"
+                  className="ly-btn ly-btn--ghost"
+                  style={{ marginTop: 12 }}
+                  disabled={websiteBusy}
+                  onClick={handleWebsiteFollow}
+                >
+                  {websiteBusy ? 'Дособор сайта…' : 'Только дособор сайта (текущая карточка)'}
+                </button>
+              ) : null}
+            </section>
+
+            <section className="ly-section">
+              <h2 className="ly-section-title">Подробный статус</h2>
+              <div className="ly-panel">
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                  <span style={{ color: 'var(--ly-muted)' }}>Автопилот, захватов</span>
+                  <strong>{status.autoCaptures ?? 0}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                  <span style={{ color: 'var(--ly-muted)' }}>Дособор сайта</span>
+                  <strong
+                    style={{
+                      color:
+                        status.lastEnrichmentStatus === 'success'
+                          ? 'var(--ly-success)'
+                          : status.lastEnrichmentStatus === 'warn'
+                            ? 'var(--ly-warn)'
+                            : 'var(--ly-muted)',
+                    }}
+                  >
+                    {status.lastEnrichmentStatus === 'success'
+                      ? 'Ок'
+                      : status.lastEnrichmentStatus === 'warn'
+                        ? 'Предупреждение'
+                        : '—'}
+                  </strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                  <span style={{ color: 'var(--ly-muted)' }}>Конфликты города</span>
+                  <strong style={{ color: (status.cityMismatchCount ?? 0) > 0 ? '#fca5a5' : 'var(--ly-success)' }}>
+                    {status.cityMismatchCount ?? 0}
+                  </strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                  <span style={{ color: 'var(--ly-muted)' }}>Последний sync</span>
+                  <strong>{formatTime(status.lastSyncTime)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                  <span style={{ color: 'var(--ly-muted)' }}>Последний автосбор</span>
+                  <strong>{formatTime(status.lastAutoCaptureAt ?? null)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+                  <span style={{ color: 'var(--ly-muted)' }}>Последний дособор</span>
+                  <strong>{formatTime(status.lastEnrichmentAt ?? null)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <span style={{ color: 'var(--ly-muted)' }}>Ошибки отправки</span>
+                  <strong style={{ color: status.flushFailures ? '#fca5a5' : 'var(--ly-success)' }}>
+                    {status.flushFailures ?? 0}
+                  </strong>
+                </div>
+              </div>
+            </section>
+
+            <section className="ly-section">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <h2 className="ly-section-title" style={{ marginBottom: 0 }}>
+                  Журнал
+                </h2>
+                <button
+                  type="button"
+                  className="ly-btn ly-btn--ghost"
+                  style={{ width: 'auto', marginLeft: 'auto', padding: '6px 10px', fontSize: 11 }}
+                  onClick={handleCopyDiagnostics}
+                >
+                  Копировать диагностику
+                </button>
+              </div>
+              <div className="ly-log">
+                {(status.recentEvents ?? []).length === 0 ? (
+                  <span style={{ color: 'var(--ly-muted)', fontSize: 11 }}>Пока нет событий</span>
+                ) : (
+                  (status.recentEvents ?? []).slice(0, 14).map((ev, idx) => (
+                    <div
+                      key={`${ev.at}-${idx}`}
+                      className={
+                        ev.level === 'error'
+                          ? 'ly-log-line--err'
+                          : ev.level === 'warn'
+                            ? 'ly-log-line--warn'
+                            : 'ly-log-line--info'
+                      }
+                      style={{ marginBottom: 4 }}
+                    >
+                      {new Date(ev.at).toLocaleTimeString('ru-RU', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                      })}{' '}
+                      · {ev.message}
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+          </>
+        )}
       </div>
 
-      {/* Settings */}
-      <div style={s.section}>
-        <div style={s.sectionTitle}>Settings</div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <input
-            style={{ ...s.input, flex: 1 }}
-            value={apiUrl}
-            onChange={(e) => setApiUrl(e.target.value)}
-            placeholder="API URL"
-          />
-          <button
-            style={{ ...s.btnSecondary, width: 'auto', padding: '8px 14px', whiteSpace: 'nowrap' }}
-            onClick={saveApiUrl}
-          >
-            Save
-          </button>
-        </div>
-      </div>
+      <footer className="ly-footer">
+        Leadiya {version ? `v${version}` : ''} · 2GIS → ваша база лидов
+      </footer>
     </div>
   )
 }

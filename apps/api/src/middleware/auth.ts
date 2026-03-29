@@ -50,6 +50,15 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
     return next()
   }
 
+  const agentKey = env.LEADIYA_AGENT_SERVICE_KEY?.trim()
+  if (agentKey) {
+    const provided = c.req.header('X-Leadiya-Service-Key')?.trim()
+    if (provided === agentKey) {
+      c.set('user', { id: 'agent-service', email: 'agent@leadiya.internal' })
+      return next()
+    }
+  }
+
   if (!env.SUPABASE_JWT_SECRET && !supabase) {
     return c.json({ error: 'Auth not configured', code: 'AUTH_NOT_CONFIGURED' }, 500)
   }

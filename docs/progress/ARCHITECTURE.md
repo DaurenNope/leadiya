@@ -66,7 +66,7 @@ flowchart LR
 ## Dashboard → API
 
 - Dev server proxies `/api` to the API (`apps/dashboard/vite.config.ts`).
-- Default API port: `3001` unless `PORT` is set.
+- Default API port: `3041` for local CLI (`npm run dev:api`); Docker image / Compose still use `3001` unless overridden.
 
 ## Workers
 

@@ -24,6 +24,10 @@ export interface Lead {
   city: string | null
   address: string | null
   website: string | null
+  /** Primary email on the company row (may duplicate contacts). */
+  email?: string | null
+  /** 2GIS firm page URL when source is 2gis. */
+  sourceUrl?: string | null
   status: string
   source: string | null
   createdAt: string
@@ -40,6 +44,8 @@ export interface Lead {
   whatsapp?: string | null
   telegram?: string | null
   category?: string | null
+  /** Rubric line(s) from the 2GIS card (e.g. «Гондольная канатная дорога»), not the discovery search preset. */
+  twogisCardCategory?: string | null
   rating2gis?: string | null
   reviewsCount2gis?: number | null
   openingHours?: Record<string, string> | null

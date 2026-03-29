@@ -7,7 +7,9 @@
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
-    "dev": "tsx watch src/main.ts",
+    "predev": "npm run build -w @leadiya/scrapers",
+    "dev": "npx concurrently -k -n scrapers,api -c blue,green \"npm run build:watch -w @leadiya/scrapers\" \"tsx watch src/main.ts\"",
+    "dev:api-only": "tsx watch src/main.ts",
     "start": "node dist/main.js"
   },
   "dependencies": {

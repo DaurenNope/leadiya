@@ -12,5 +12,6 @@ export default defineConfig({
     connectionString: process.env.DATABASE_DIRECT_URL as string,
   },
   verbose: true,
-  strict: true,
+  /** Keep pushes non-interactive by default (local/dev). */
+  strict: process.env.DRIZZLE_KIT_STRICT === 'true',
 });

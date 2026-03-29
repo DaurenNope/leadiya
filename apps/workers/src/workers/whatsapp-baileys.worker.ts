@@ -49,6 +49,34 @@ const redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null })
 let sock: WASocket | null = null
 let waOpen = false
 
+function inboundLogEnabled(): boolean {
+  const v = env.WHATSAPP_INBOUND_LOG
+  return v === 'true' || v === '1'
+}
+
+/** Best-effort text for DB logging (not a full message renderer). */
+function textFromUpsertMessage(m: unknown): string {
+  const raw = m as { message?: Record<string, unknown> | null }
+  const msg = raw.message
+  if (!msg) return ''
+  if (typeof msg.conversation === 'string') return msg.conversation
+  const ext = msg.extendedTextMessage as { text?: string } | undefined
+  if (ext?.text) return ext.text
+  const img = msg.imageMessage as { caption?: string } | undefined
+  if (img) return img.caption?.trim() ? img.caption : '[Image]'
+  const vid = msg.videoMessage as { caption?: string } | undefined
+  if (vid) return vid.caption?.trim() ? vid.caption : '[Video]'
+  const doc = msg.documentMessage as { caption?: string } | undefined
+  if (doc) return doc.caption?.trim() ? doc.caption : '[Document]'
+  if (msg.audioMessage) return '[Audio]'
+  if (msg.stickerMessage) return '[Sticker]'
+  if (msg.buttonsResponseMessage) {
+    const b = msg.buttonsResponseMessage as { selectedDisplayText?: string }
+    return b.selectedDisplayText ? `Button: ${b.selectedDisplayText}` : '[Button reply]'
+  }
+  return ''
+}
+
 async function connectToWhatsApp(): Promise<void> {
   const { state, saveCreds } = await useMultiFileAuthState(authDir)
   const s = makeWASocket({
@@ -83,6 +111,33 @@ async function connectToWhatsApp(): Promise<void> {
       console.log('[whatsapp] Baileys session open — outbound queue enabled')
     }
   })
+
+  if (inboundLogEnabled()) {
+    s.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return
+      for (const m of messages) {
+        if (!m.key || m.key.fromMe) continue
+        const jid = m.key.remoteJid
+        if (!jid || jid.endsWith('@g.us')) continue
+        if (!jid.endsWith('@s.whatsapp.net') && !jid.endsWith('@lid')) continue
+        const text = textFromUpsertMessage(m).trim()
+        if (!text) continue
+        try {
+          await db.insert(outreachLog).values({
+            leadId: null,
+            channel: 'whatsapp',
+            direction: 'inbound',
+            body: text,
+            status: 'received',
+            waPeer: jid,
+          })
+        } catch (e) {
+          console.warn('[whatsapp] inbound log insert failed:', e instanceof Error ? e.message : e)
+        }
+      }
+    })
+    console.log('[whatsapp] Inbound message logging enabled (WHATSAPP_INBOUND_LOG) → outreach_log')
+  }
 }
 
 void connectToWhatsApp().catch((e) => console.error('[whatsapp] initial connect failed', e))

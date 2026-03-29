@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { db, companies, contacts as contactsTable, inArray } from '@leadiya/db'
-import { sql, desc, eq, and, ilike, or, gte, lte, asc, exists, type SQL } from 'drizzle-orm'
+import { sql, desc, eq, and, ilike, or, gte, lte, asc, exists, isNotNull, type SQL } from 'drizzle-orm'
 import { Queue } from 'bullmq'
 import { env } from '@leadiya/config'
 
@@ -35,16 +35,25 @@ function sanitizeIlikeFragment(s: string): string {
   return s.replace(/[%_\\]/g, '')
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 function buildWhereClause(c: { req: { query: (k: string) => string | undefined } }): SQL | undefined {
   const qRaw = c.req.query('q')?.trim()
   const city = c.req.query('city')?.trim()
   const category = c.req.query('category')?.trim()
   const source = c.req.query('source')?.trim()
   const status = c.req.query('status')?.trim()
+  const twogisCardCategory = c.req.query('twogisCardCategory')?.trim()
+  const scraperRunId = c.req.query('scraperRunId')?.trim()
   const icpMin = c.req.query('icpMin') ? parseInt(c.req.query('icpMin')!, 10) : undefined
   const icpMax = c.req.query('icpMax') ? parseInt(c.req.query('icpMax')!, 10) : undefined
 
   const conditions: SQL[] = []
+
+  if (scraperRunId && scraperRunId.length > 0 && UUID_RE.test(scraperRunId)) {
+    conditions.push(sql`${companies.rawData}->>'twogisScraperRunId' = ${scraperRunId}`)
+  }
 
   if (qRaw && qRaw.length > 0) {
     const safe = sanitizeIlikeFragment(qRaw)
@@ -77,7 +86,11 @@ function buildWhereClause(c: { req: { query: (k: string) => string | undefined }
     conditions.push(or(...variants.map((v) => eq(companies.city, v)))!)
   }
   if (category && category.length > 0 && category.toLowerCase() !== 'all') {
-    conditions.push(eq(companies.category, category))
+    if (category === '__empty__') {
+      conditions.push(or(sql`trim(coalesce(${companies.category}, '')) = ''`, sql`${companies.category} is null`)!)
+    } else {
+      conditions.push(eq(companies.category, category))
+    }
   }
   if (source && source.length > 0 && source.toLowerCase() !== 'all') {
     conditions.push(eq(companies.source, source))
@@ -85,26 +98,93 @@ function buildWhereClause(c: { req: { query: (k: string) => string | undefined }
   if (status && status.length > 0 && status.toLowerCase() !== 'all') {
     conditions.push(eq(companies.status, status))
   }
+  if (twogisCardCategory && twogisCardCategory.length > 0 && twogisCardCategory.toLowerCase() !== 'all') {
+    const safe = sanitizeIlikeFragment(twogisCardCategory)
+    if (safe.length > 0) conditions.push(ilike(companies.twogisCardCategory, `%${safe}%`))
+  }
   if (icpMin !== undefined && !Number.isNaN(icpMin)) conditions.push(gte(companies.icpScore, icpMin))
   if (icpMax !== undefined && !Number.isNaN(icpMax)) conditions.push(lte(companies.icpScore, icpMax))
 
   return conditions.length > 0 ? and(...conditions) : undefined
 }
 
+/** Full-table facet counts for filter dropdowns (same shape as `GET /filters-meta`). */
+async function loadFiltersMetaBuckets(limitBuckets: number) {
+  const [cityRows, categoryRows, sourceRows, statusRows] = await Promise.all([
+    db
+      .select({
+        value: companies.city,
+        count: sql<number>`cast(count(*) as int)`,
+      })
+      .from(companies)
+      .where(and(isNotNull(companies.city), sql`trim(${companies.city}) <> ''`))
+      .groupBy(companies.city)
+      .orderBy(desc(sql`count(*)`))
+      .limit(limitBuckets),
+    db
+      .select({
+        value: companies.category,
+        count: sql<number>`cast(count(*) as int)`,
+      })
+      .from(companies)
+      .where(and(isNotNull(companies.category), sql`trim(${companies.category}) <> ''`))
+      .groupBy(companies.category)
+      .orderBy(desc(sql`count(*)`))
+      .limit(limitBuckets),
+    db
+      .select({
+        value: companies.source,
+        count: sql<number>`cast(count(*) as int)`,
+      })
+      .from(companies)
+      .where(and(isNotNull(companies.source), sql`trim(${companies.source}) <> ''`))
+      .groupBy(companies.source)
+      .orderBy(desc(sql`count(*)`))
+      .limit(limitBuckets),
+    db
+      .select({
+        value: companies.status,
+        count: sql<number>`cast(count(*) as int)`,
+      })
+      .from(companies)
+      .where(and(isNotNull(companies.status), sql`trim(${companies.status}) <> ''`))
+      .groupBy(companies.status)
+      .orderBy(desc(sql`count(*)`))
+      .limit(limitBuckets),
+  ])
+
+  const uncategorized = await db
+    .select({ count: sql<number>`cast(count(*) as int)` })
+    .from(companies)
+    .where(or(sql`trim(coalesce(${companies.category}, '')) = ''`, sql`${companies.category} is null`)!)
+
+  const emptyCat = Number(uncategorized[0]?.count ?? 0)
+
+  return {
+    cities: cityRows.map((r) => ({ value: r.value as string, count: Number(r.count) })),
+    categories: categoryRows.map((r) => ({ value: r.value as string, count: Number(r.count) })),
+    uncategorizedCount: emptyCat,
+    sources: sourceRows.map((r) => ({ value: r.value as string, count: Number(r.count) })),
+    statuses: statusRows.map((r) => ({ value: r.value as string, count: Number(r.count) })),
+  }
+}
+
+/** Distinct filter values + counts from the live table (keeps UI dropdowns aligned with data). */
+companiesRouter.get('/filters-meta', async (c) => {
+  const limitBuckets = Math.min(Math.max(parseInt(c.req.query('limitBuckets') || '120', 10), 1), 200)
+  return c.json(await loadFiltersMetaBuckets(limitBuckets))
+})
+
 companiesRouter.get('/', async (c) => {
   const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '50', 10), 1), LEADS_PAGE_MAX)
   const offset = Math.min(Math.max(parseInt(c.req.query('offset') || '0', 10), 0), LEADS_OFFSET_MAX)
   const sortBy = c.req.query('sortBy') || 'createdAt'
   const sortOrder = c.req.query('sortOrder') === 'asc' ? 'asc' : 'desc'
+  const includeFiltersMeta =
+    c.req.query('includeFiltersMeta') === '1' || c.req.query('includeFiltersMeta') === 'true'
+  const limitBuckets = Math.min(Math.max(parseInt(c.req.query('limitBuckets') || '120', 10), 1), 200)
 
   const whereClause = buildWhereClause(c)
-
-  const [totalCountResult] = await db
-    .select({ count: sql<number>`count(*)` })
-    .from(companies)
-    .where(whereClause)
-
-  const total = Number(totalCountResult?.count || 0)
 
   type SortCol =
     | typeof companies.name
@@ -125,7 +205,12 @@ companiesRouter.get('/', async (c) => {
   const sortCol = sortCols[sortBy] ?? companies.createdAt
   const orderBy = sortOrder === 'asc' ? asc(sortCol) : desc(sortCol)
 
-  const results = await db
+  const [totalCountResult] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(companies)
+    .where(whereClause)
+
+  const listPromise = db
     .select(leadListFields)
     .from(companies)
     .where(whereClause)
@@ -133,10 +218,20 @@ companiesRouter.get('/', async (c) => {
     .limit(limit)
     .offset(offset)
 
+  const [results, filtersMeta] = await Promise.all([
+    listPromise,
+    includeFiltersMeta ? loadFiltersMetaBuckets(limitBuckets) : Promise.resolve(null),
+  ])
+
+  const total = Number(totalCountResult?.count || 0)
   const companyIds = results.map((r) => r.id)
 
   if (companyIds.length === 0) {
-    return c.json({ items: [], pagination: { total, limit, offset } })
+    return c.json({
+      items: [],
+      pagination: { total, limit, offset },
+      ...(filtersMeta ? { filtersMeta } : {}),
+    })
   }
 
   const contactsForResults = await db
@@ -149,7 +244,11 @@ companiesRouter.get('/', async (c) => {
     contacts: contactsForResults.filter((ct) => ct.leadId === company.id),
   }))
 
-  return c.json({ items, pagination: { total, limit, offset } })
+  return c.json({
+    items,
+    pagination: { total, limit, offset },
+    ...(filtersMeta ? { filtersMeta } : {}),
+  })
 })
 
 companiesRouter.get('/export', async (c) => {
@@ -196,6 +295,17 @@ companiesRouter.get('/export', async (c) => {
   return c.body(csv)
 })
 
+companiesRouter.get('/bin/:bin', async (c) => {
+  const bin = c.req.param('bin')
+  const [company] = await db
+    .select(leadDetailFields)
+    .from(companies)
+    .where(eq(companies.bin, bin))
+    .limit(1)
+  if (!company) return c.json({ error: 'Company not found', code: 'NOT_FOUND' }, 404)
+  return c.json(company)
+})
+
 companiesRouter.get('/:id', async (c) => {
   const id = c.req.param('id')
 
@@ -209,17 +319,6 @@ companiesRouter.get('/:id', async (c) => {
   const companyContacts = await db.select().from(contactsTable).where(eq(contactsTable.leadId, id))
 
   return c.json({ ...company, contacts: companyContacts })
-})
-
-companiesRouter.get('/bin/:bin', async (c) => {
-  const bin = c.req.param('bin')
-  const [company] = await db
-    .select(leadDetailFields)
-    .from(companies)
-    .where(eq(companies.bin, bin))
-    .limit(1)
-  if (!company) return c.json({ error: 'Company not found', code: 'NOT_FOUND' }, 404)
-  return c.json(company)
 })
 
 companiesRouter.post('/:id/enrich', async (c) => {
@@ -243,7 +342,7 @@ companiesRouter.post('/:id/enrich', async (c) => {
     }
   }
 
-  await enrichmentQueue.add('enrich', { leadIds: [id] }, { jobId: `enrich-single:${id}` })
+  await enrichmentQueue.add('enrich', { leadIds: [id] }, { jobId: `enrich-single-${id}` })
 
   if (forceTwogis) {
     await twogisEnrichQueue.add(
@@ -251,7 +350,7 @@ companiesRouter.post('/:id/enrich', async (c) => {
       { leadId: id, force: true },
       {
         ...twogisEnrichJobOpts,
-        jobId: `twogis-force:${id}:${Date.now()}`,
+        jobId: `twogis-force-${id}-${Date.now()}`,
       }
     )
   }
@@ -285,12 +384,41 @@ companiesRouter.post('/bulk-action', async (c) => {
         .where(inArray(companies.id, ids))
       return c.json({ message: `Archived ${ids.length} leads`, count: ids.length })
 
+    /** Move leads back to the default working status (e.g. after mistaken archive). */
+    case 'restore':
+      await db
+        .update(companies)
+        .set({ status: 'valid', updatedAt: new Date() })
+        .where(inArray(companies.id, ids))
+      return c.json({ message: `Restored ${ids.length} leads`, count: ids.length })
+
     case 'delete':
-      await db.delete(companies).where(inArray(companies.id, ids))
+      try {
+        await db.delete(companies).where(inArray(companies.id, ids))
+      } catch (e: unknown) {
+        const code =
+          e && typeof e === 'object' && 'code' in e
+            ? String((e as { code: unknown }).code)
+            : e && typeof e === 'object' && 'cause' in e && (e as { cause: unknown }).cause != null
+              ? String((e as { cause: { code?: string } }).cause?.code ?? '')
+              : ''
+        if (code === '23503') {
+          return c.json(
+            {
+              error:
+                'Cannot delete: another table still references one of these leads (for example tenders). Remove those links first.',
+              code: 'DELETE_REFERENCED',
+            },
+            409,
+          )
+        }
+        console.error('[companies/bulk-action] delete failed:', e)
+        return c.json({ error: 'Delete failed', code: 'DELETE_FAILED' }, 500)
+      }
       return c.json({ message: `Deleted ${ids.length} leads`, count: ids.length })
 
     case 'enrich':
-      await enrichmentQueue.add('enrich', { leadIds: ids }, { jobId: `enrich-bulk:${Date.now()}` })
+      await enrichmentQueue.add('enrich', { leadIds: ids }, { jobId: `enrich-bulk-${Date.now()}` })
       if (forceTwogis) {
         const ts = Date.now()
         for (let i = 0; i < ids.length; i++) {
@@ -298,7 +426,7 @@ companiesRouter.post('/bulk-action', async (c) => {
           await twogisEnrichQueue.add(
             'enrich',
             { leadId, force: true },
-            { ...twogisEnrichJobOpts, jobId: `twogis-force:${leadId}:${ts}:${i}` }
+            { ...twogisEnrichJobOpts, jobId: `twogis-force-${leadId}-${ts}-${i}` }
           )
         }
       }

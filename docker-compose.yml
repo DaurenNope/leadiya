@@ -1,0 +1,30 @@
+# Local / small deploy: dashboard nginx proxies /api → Hono.
+# Requires .env with DATABASE_*, REDIS_URL (API exits on boot if env invalid).
+# If Postgres/Redis run on your machine (not in Compose), use host.docker.internal
+# in DATABASE_* and REDIS_URL so the api container can reach them.
+#
+#   docker compose up --build
+#   open http://localhost:8080
+#
+# API health: curl http://localhost:3001/health  (Compose maps host 3001 → container; local CLI dev uses PORT=3041 by default)
+
+services:
+  api:
+    build:
+      context: .
+      target: api
+    ports:
+      - "3001:3001"
+    env_file: .env
+    # Keep container on 3001 even if .env sets PORT=3041 for local CLI dev.
+    environment:
+      PORT: "3001"
+
+  dashboard:
+    build:
+      context: .
+      target: dashboard
+    ports:
+      - "8080:80"
+    depends_on:
+      - api

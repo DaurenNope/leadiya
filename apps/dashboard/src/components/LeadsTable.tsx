@@ -1,41 +1,51 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { Lead, Contact } from '../types';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from 'react';
+import type { Lead } from '../types';
 import { useToast } from '../hooks/useToast'
+import { useExtensionStatus } from '../context/ExtensionStatusContext'
+import { apiUrl } from '../apiBase'
+import { leadStatusLabel } from '../lib/lead-ui'
+
+/** Vite `define` in development — see vite.config.ts */
+function devApiBackendHint(): string {
+  const t = __LEADIYA_DEV_PROXY_TARGET__
+  return typeof t === 'string' && t.length > 0 ? t : __LEADIYA_DEFAULT_API_ORIGIN__
+}
 
 interface LeadsTableProps {
   onLeadClick?: (lead: Lead) => void;
+  /** Increment to refetch the current page (e.g. after a scraper finishes). */
+  refreshNonce?: number;
+  /** Filter to leads saved under this 2GIS scraper run (raw_data.twogisScraperRunId). */
+  scraperRunIdFilter?: string | null;
+  onClearScraperRunFilter?: () => void;
 }
 
 type SortKey = 'name' | 'city' | 'bin' | 'status' | 'createdAt' | 'icpScore';
 type SortOrder = 'asc' | 'desc';
 
-/** Matches `leads.city` from 2GIS scrapers (Cyrillic). API also accepts Latin aliases. */
-const FILTER_CITIES = [
-  'Алматы',
-  'Астана',
-  'Шымкент',
-  'Актобе',
-  'Караганда',
-  'Тараз',
-  'Усть-Каменогорск',
-  'Костанай',
-  'Павлодар',
-] as const
+function formatAddedAt(iso: string | undefined): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString('ru-RU', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
 
-/** Common 2GIS search categories + legacy English verticals. */
-const FILTER_CATEGORIES = [
-  'Университеты',
-  'Институты',
-  'Академии',
-  'Колледжи',
-  'Высшие учебные заведения',
-  'Негосударственные вузы',
-  'Бизнес-школы',
-  'Филиалы университетов',
-  'Bars',
-  'Beauty Salons',
-  'Car Services',
-] as const
+type FilterBucket = { value: string; count: number }
+
+type FiltersMeta = {
+  cities: FilterBucket[]
+  categories: FilterBucket[]
+  uncategorizedCount: number
+  sources: FilterBucket[]
+  statuses: FilterBucket[]
+}
 
 const SourceBadge = ({ source }: { source: string | null }) => {
   const normalized = (source || '').toLowerCase();
@@ -45,7 +55,7 @@ const SourceBadge = ({ source }: { source: string | null }) => {
   
   return (
     <span className={`px-2 py-0.5 rounded-md border text-[9px] font-black uppercase tracking-widest ${styles}`}>
-      {source || 'Unknown'}
+      {source || 'Неизвестно'}
     </span>
   );
 };
@@ -55,49 +65,111 @@ const StatusBadge = ({ status }: { status: string | null }) => {
   let styles = 'bg-slate-500/10 text-slate-400 border-slate-500/20';
   if (normalized === 'valid' || normalized === 'enriched') styles = 'bg-brand-500/10 text-brand-400 border-brand-500/20';
   if (normalized === 'failed') styles = 'bg-rose-500/10 text-rose-400 border-rose-500/20';
-  
+  if (normalized === 'archived') styles = 'bg-amber-500/10 text-amber-400 border-amber-500/25';
+
   return (
     <span className={`px-2 py-0.5 rounded-md border text-[9px] font-black uppercase tracking-widest ${styles}`}>
-      {normalized}
+      {leadStatusLabel(status)}
     </span>
   );
 };
 
-const ContactPill = ({ contact }: { contact: Contact }) => {
-  const isEmail = !!contact.email;
-  const val = contact.phone || contact.email;
-  if (!val) return null;
+/** Table-shaped placeholders so the lead list never flashes a blank full-page spinner. */
+function LeadTableSkeletonRows({ rows }: { rows: number }) {
+  const py = 'py-6'
+  const avatar = 'h-14 w-14 rounded-2xl'
+  return (
+    <>
+      {Array.from({ length: rows }, (_, i) => (
+        <tr key={i} className="animate-pulse" aria-hidden>
+          <td className={`px-5 ${py}`}>
+            <div className="h-4 w-4 rounded bg-slate-800/90" />
+          </td>
+          <td className={`px-5 ${py}`}>
+            <div className="flex items-center gap-5">
+              <div className={`shrink-0 ${avatar} bg-slate-800/90`} />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="h-3.5 max-w-[14rem] rounded bg-slate-800/90" />
+                <div className="h-2.5 w-28 rounded bg-slate-800/80" />
+              </div>
+            </div>
+          </td>
+          <td className={`px-5 ${py}`}>
+            <div className="h-3 w-24 rounded bg-slate-800/90" />
+          </td>
+          <td className={`px-5 ${py}`}>
+            <div className="h-6 w-32 rounded-lg bg-slate-800/90" />
+          </td>
+          <td className={`px-5 ${py}`}>
+            <div className="h-3 w-28 rounded bg-slate-800/90" />
+          </td>
+          <td className={`px-5 ${py}`}>
+            <div className="ml-auto h-8 w-24 rounded-xl bg-slate-800/90" />
+          </td>
+        </tr>
+      ))}
+    </>
+  )
+}
+
+/** One-line label + value for contacts column */
+function LeadReachSummary({ lead }: { lead: Lead }) {
+  const stop = (e: MouseEvent) => e.stopPropagation()
+  const phone = lead.contacts?.find((c) => c.phone?.trim())?.phone?.trim()
+  const email = (lead.email?.trim() || lead.contacts?.find((c) => c.email?.trim())?.email?.trim()) ?? ''
+  const wa = lead.whatsapp?.trim()
+
+  const rows: { k: string; v: string; href?: string }[] = []
+  if (phone) rows.push({ k: 'Тел', v: phone })
+  if (email) rows.push({ k: 'Почта', v: email, href: `mailto:${email}` })
+  if (wa) rows.push({ k: 'WA', v: wa.length > 22 ? `${wa.slice(0, 20)}…` : wa })
+
+  if (rows.length === 0) {
+    return <span className="text-[10px] text-slate-500">Нет контактов</span>
+  }
 
   return (
-    <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-900 border border-white/5 rounded-lg group/pill hover:border-brand-500/30 transition-all">
-      <div className={`w-1.5 h-1.5 rounded-full ${isEmail ? 'bg-indigo-400' : 'bg-emerald-400'}`}></div>
-      <span className="text-[10px] font-mono font-bold text-slate-300 group-hover/pill:text-white transition-colors">
-        {val}
-      </span>
-      <button 
-        onClick={(e) => {
-          e.stopPropagation();
-          navigator.clipboard.writeText(val);
-        }}
-        className="opacity-0 group-hover/pill:opacity-100 transition-opacity hover:text-brand-400 p-0.5"
-        title="Copy"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-      </button>
+    <div className="flex flex-col gap-1 min-w-0 max-w-[220px]">
+      {rows.map((r, i) => (
+        <div key={i} className="flex items-baseline gap-1.5 min-w-0 text-[10px]">
+          <span className="shrink-0 font-bold uppercase tracking-wider text-slate-600 w-7">{r.k}</span>
+          {r.href ? (
+            <a
+              href={r.href}
+              onClick={stop}
+              className="min-w-0 truncate font-mono text-sky-300 hover:text-sky-200 underline decoration-sky-500/40"
+            >
+              {r.v}
+            </a>
+          ) : (
+            <span className="min-w-0 truncate font-mono text-slate-200">{r.v}</span>
+          )}
+        </div>
+      ))}
     </div>
-  );
-};
+  )
+}
 
 
-export function LeadsTable({ onLeadClick }: LeadsTableProps) {
+export function LeadsTable({
+  onLeadClick,
+  refreshNonce = 0,
+  scraperRunIdFilter = null,
+  onClearScraperRunFilter,
+}: LeadsTableProps) {
   const { toast } = useToast();
+  const extensionStatus = useExtensionStatus();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listHydrated, setListHydrated] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(50);
   
-  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [filtersMeta, setFiltersMeta] = useState<FiltersMeta | null>(null);
   const [enrichingId, setEnrichingId] = useState<string | null>(null);
   
   const [sortConfig, setSortConfig] = useState<{ key: SortKey; order: SortOrder }>({ key: 'createdAt', order: 'desc' });
@@ -109,10 +181,65 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
 
   // Selection state for bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [density, setDensity] = useState<'compact' | 'comfortable'>('comfortable');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  /** Ignore stale JSON when filters/page change faster than the network. */
+  const fetchGenerationRef = useRef(0);
+  /** When true, next list fetch also loads filter dropdown facets (one round-trip via `includeFiltersMeta`). */
+  const needFiltersMetaRef = useRef(true);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(searchInput.trim()), 400);
+    return () => window.clearTimeout(t);
+  }, [searchInput]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
+
+  useEffect(() => {
+    if (refreshNonce > 0) needFiltersMetaRef.current = true;
+  }, [refreshNonce]);
+
+  const sourceOptions = useMemo(() => {
+    const m = filtersMeta?.sources?.length ? [...filtersMeta.sources] : [];
+    const seen = new Set(m.map((x) => x.value));
+    for (const fallback of ['2gis', '2gis-extension', 'manual']) {
+      if (!seen.has(fallback)) {
+        m.push({ value: fallback, count: 0 });
+        seen.add(fallback);
+      }
+    }
+    return m.sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+  }, [filtersMeta]);
+
+  const statusOptions = useMemo(() => {
+    const m = filtersMeta?.statuses?.length ? [...filtersMeta.statuses] : [];
+    const seen = new Set(m.map((x) => x.value));
+    for (const fallback of ['new', 'valid', 'enriched', 'failed', 'archived']) {
+      if (!seen.has(fallback)) {
+        m.push({ value: fallback, count: 0 });
+        seen.add(fallback);
+      }
+    }
+    return m.sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+  }, [filtersMeta]);
+
+  const activeFilterCount = useMemo(() => {
+    let n = 0;
+    if (filterCity !== 'all') n++;
+    if (filterCategory !== 'all') n++;
+    if (filterSource !== 'all') n++;
+    if (filterStatus !== 'all') n++;
+    if (filterIcp !== 'all') n++;
+    if (scraperRunIdFilter) n++;
+    return n;
+  }, [filterCity, filterCategory, filterSource, filterStatus, filterIcp, scraperRunIdFilter]);
 
   const fetchLeads = useCallback(async () => {
+    const myGen = ++fetchGenerationRef.current;
     setLoading(true);
+    setFetchError(null);
     try {
       const params = new URLSearchParams({
         limit: pageSize.toString(),
@@ -121,7 +248,7 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
         sortOrder: sortConfig.order,
       });
 
-      if (search) params.append('q', search);
+      if (debouncedSearch) params.append('q', debouncedSearch);
       if (filterCity !== 'all') params.append('city', filterCity);
       if (filterCategory !== 'all') params.append('category', filterCategory);
       if (filterSource !== 'all') params.append('source', filterSource);
@@ -131,22 +258,121 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
       else if (filterIcp === 'medium') { params.append('icpMin', '40'); params.append('icpMax', '79'); }
       else if (filterIcp === 'low') { params.append('icpMax', '39'); }
 
-      const res = await fetch(`/api/companies?${params.toString()}`);
-      if (!res.ok) throw new Error('Network response was not ok');
-      const data = await res.json();
-      
+      if (scraperRunIdFilter) params.set('scraperRunId', scraperRunIdFilter)
+
+      if (needFiltersMetaRef.current) params.set('includeFiltersMeta', '1');
+
+      const listPath = `/api/companies?${params.toString()}`
+      const res = await fetch(apiUrl(listPath))
+      if (myGen !== fetchGenerationRef.current) return
+
+      if (!res.ok) {
+        const relative = apiUrl(listPath)
+        const attempted =
+          typeof window !== 'undefined' && !relative.startsWith('http')
+            ? `${window.location.origin}${relative}`
+            : relative
+        const directOrigin = (import.meta.env.VITE_PUBLIC_API_ORIGIN as string | undefined)?.replace(/\/$/, '') ?? ''
+
+        let msg: string
+        if (res.status === 404) {
+          const backend = devApiBackendHint()
+          msg = [
+            `404 — /api/companies не найден. Чаще всего на порту API отвечает не тот процесс (прокси Vite → ${backend}).`,
+            '',
+            `Проверка: curl -sS "${backend}/health"`,
+            `У Leadiya в JSON должно быть "service":"leadiya-api". Если видите "healthy" или plain text — это не этот API.`,
+            '',
+            `Запуск: \`npm run dev:api\` или \`npm run dev:web\`. Порт по умолчанию — в dev-ports.json (localCliApiPort).`,
+            `Устаревший .env: уберите LEADIYA_API_ORIGIN=http://localhost:3001, если не используете 3001 для Hono.`,
+            attempted ? `Запрос: ${attempted}` : '',
+            directOrigin ? `VITE_PUBLIC_API_ORIGIN=${directOrigin}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n')
+        } else if (res.status === 401) {
+          msg = [
+            `HTTP 401 — API требует Bearer-токен (Supabase JWT).`,
+            `Для локального Hono: AUTH_BYPASS=true в .env в корне репозитория и перезапуск API.`,
+            `Запрос: ${attempted}`,
+          ].join('\n')
+        } else if (res.status === 502) {
+          msg = [
+            `HTTP 502 — прокси не достучался до API (неверный LEADIYA_API_ORIGIN или API не слушает).`,
+            `Запрос: ${attempted}`,
+            `Из корня: \`npm run dev:web:stable\` (дашборд + авто-рестарт API).`,
+            `Или вручную: \`npm run dev:api\` + \`npm run dev:dashboard\`.`,
+          ].join('\n')
+        } else {
+          msg = [
+            `API вернул ${res.status}.`,
+            `Запрос: ${attempted}`,
+            `Dev: \`npm run dev:web\`. Продакшен: задайте VITE_PUBLIC_API_ORIGIN и маршруты /api на том же API.`,
+          ].join('\n')
+        }
+        setFetchError(msg)
+        setLeads([])
+        setTotal(0)
+        return
+      }
+      const data = (await res.json()) as {
+        items?: Lead[]
+        pagination?: { total?: number }
+        filtersMeta?: FiltersMeta
+      };
+
+      if (myGen !== fetchGenerationRef.current) return;
+
       setLeads(data.items || []);
       setTotal(data.pagination?.total || 0);
+      if (data.filtersMeta && typeof data.filtersMeta === 'object') {
+        setFiltersMeta(data.filtersMeta);
+        needFiltersMetaRef.current = false;
+      }
     } catch (err) {
+      if (myGen !== fetchGenerationRef.current) return;
       console.error('Failed to fetch leads:', err);
+      const isNetwork =
+        err instanceof TypeError &&
+        (err.message === 'Failed to fetch' || err.message.includes('NetworkError'))
+      setFetchError(
+        isNetwork
+          ? 'Сеть: дашборд не достучался до API. Из корня: `npm run dev:web:stable` (авто-рестарт API) или `npm run dev:api` + `npm run dev:dashboard`. Vite проксирует на LEADIYA_API_ORIGIN (по умолчанию http://localhost:3041).'
+          : err instanceof Error
+            ? err.message
+            : 'Не удалось вызвать /api/companies',
+      )
+      setLeads([]);
+      setTotal(0);
     } finally {
-      setLoading(false);
+      if (myGen === fetchGenerationRef.current) {
+        setLoading(false);
+        setListHydrated(true);
+      }
     }
-  }, [page, pageSize, search, sortConfig, filterCity, filterCategory, filterSource, filterStatus, filterIcp]);
+  }, [page, pageSize, debouncedSearch, sortConfig, filterCity, filterCategory, filterSource, filterStatus, filterIcp, scraperRunIdFilter]);
+
+  useEffect(() => {
+    setPage(1)
+  }, [scraperRunIdFilter])
 
   useEffect(() => {
     fetchLeads();
-  }, [fetchLeads]);
+  }, [fetchLeads, refreshNonce]);
+
+  useEffect(() => {
+    if (!scraperRunIdFilter || leads.length === 0) return
+    const t = window.setTimeout(() => {
+      document.querySelector('[data-scraper-run-first-row="1"]')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }, 100)
+    return () => window.clearTimeout(t)
+  }, [scraperRunIdFilter, leads])
+
+  useEffect(() => {
+    return () => {
+      fetchGenerationRef.current += 1;
+    };
+  }, []);
 
   const toggleSelectAll = () => {
     if (selectedIds.size === leads.length) {
@@ -156,7 +382,7 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
     }
   };
 
-  const toggleSelect = (e: React.MouseEvent, id: string) => {
+  const toggleSelect = (e: MouseEvent, id: string) => {
     e.stopPropagation();
     const next = new Set(selectedIds);
     if (next.has(id)) next.delete(id);
@@ -176,79 +402,158 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
 
   const paginatedLeads = leads;
 
+  const postBulkAction = async (body: Record<string, unknown>) => {
+    const res = await fetch(apiUrl('/api/companies/bulk-action'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string }
+    if (!res.ok) {
+      throw new Error(data.error || `Запрос не выполнен (${res.status})`)
+    }
+    return data.message ?? 'Готово'
+  }
+
   const handleEnrich = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     setEnrichingId(id);
     try {
-      const res = await fetch(`/api/companies/${id}/enrich`, { method: 'POST' });
+      const res = await fetch(apiUrl(`/api/companies/${id}/enrich`), { method: 'POST' });
       if (!res.ok) throw new Error();
-      toast('Enrichment queued', 'success');
+      toast('Обогащение поставлено в очередь', 'success');
       setTimeout(() => fetchLeads(), 2000);
     } catch {
-      toast('Failed to queue enrichment', 'error');
+      toast('Не удалось поставить обогащение в очередь', 'error');
     } finally {
       setEnrichingId(null);
     }
   };
 
-  if (loading && leads.length === 0) return (
-    <div className="p-20 flex flex-col items-center justify-center space-y-4">
-      <div className="w-12 h-12 border-4 border-brand-500/20 border-t-brand-500 rounded-full animate-spin"></div>
-      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Syncing Intelligence Matrix...</p>
-    </div>
-  );
-
   return (
     <div className="animate-fade-in space-y-6 pb-20">
+      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {loading && !listHydrated ? 'Загрузка списка лидов с сервера.' : ''}
+        {listHydrated && loading ? 'Обновление списка лидов.' : ''}
+      </p>
+      {fetchError && (
+        <div
+          role="alert"
+          className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-5 py-4 text-sm text-rose-100"
+        >
+          <p className="font-bold text-rose-200">Не удалось загрузить лиды</p>
+          <p className="mt-2 text-rose-100/90 whitespace-pre-wrap font-mono text-xs leading-relaxed">{fetchError}</p>
+        </div>
+      )}
       <div className="flex flex-col gap-6">
         {/* Search & Stats */}
-        <div className="flex flex-col lg:flex-row gap-4 justify-between items-center">
-          <div className="relative w-full lg:w-[32rem] group">
+        {extensionStatus === 'disconnected' && (
+          <div className="rounded-lg border border-amber-500/15 bg-amber-950/20 px-3 py-2 text-xs text-amber-200/90">
+            Расширение не подключено — меню «Расширение».
+          </div>
+        )}
+
+        {scraperRunIdFilter && (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-950/30 px-4 py-3 text-sm">
+            <span className="text-slate-400">Лиды этого запуска 2GIS</span>
+            <code className="text-xs font-mono text-amber-200/95">{scraperRunIdFilter.slice(0, 8)}…</code>
+            {onClearScraperRunFilter ? (
+              <button
+                type="button"
+                onClick={onClearScraperRunFilter}
+                className="text-xs font-semibold text-sky-400 hover:text-sky-300 underline underline-offset-2"
+              >
+                Сбросить фильтр
+              </button>
+            ) : null}
+            <span className="text-[11px] text-slate-500">Новые сборы с версии кода пишут <code className="text-slate-400">twogisScraperRunId</code> в raw_data.</span>
+          </div>
+        )}
+
+        <div className="flex flex-col lg:flex-row gap-4 justify-between items-start lg:items-center">
+          <div className="relative w-full lg:w-[min(100%,28rem)] group">
             <input 
               type="text" 
-              placeholder="Search by name, BIN, phone or email..." 
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value)
-                setPage(1)
-              }}
-              className="w-full bg-slate-950/40 border border-white/5 rounded-2xl px-12 py-4 text-xs font-medium focus:border-brand-500/50 transition-all outline-none backdrop-blur-xl group-hover:border-white/10"
+              placeholder="Название, БИН, телефон или почта…" 
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              className="w-full bg-slate-900/60 border border-white/[0.08] rounded-xl px-12 py-3.5 text-sm focus:border-sky-500/40 focus:ring-1 focus:ring-sky-500/20 transition-all outline-none"
             />
             <svg className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-brand-400 transition-colors" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
           </div>
           
-          <div className="flex items-center gap-3">
-             <div className="px-5 py-2.5 bg-brand-500/5 rounded-2xl border border-brand-500/10 flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3">
+             <div className="px-4 py-2.5 bg-slate-900/60 rounded-xl border border-white/[0.08] flex items-center gap-4">
                 <div className="flex flex-col">
-                  <span className="text-[8px] font-black text-slate-600 uppercase tracking-[0.2em]">Live Registry</span>
-                  <span className="text-xs font-black text-brand-400">{total.toLocaleString()}</span>
+                  <span className="text-[10px] text-slate-500">Всего по фильтру</span>
+                  <span className="text-sm font-semibold text-slate-100 tabular-nums">
+                    {loading && !listHydrated ? '—' : total.toLocaleString()}
+                  </span>
                 </div>
                 <div className="w-px h-6 bg-white/5"></div>
                 <div className="flex flex-col">
-                  <span className="text-[8px] font-black text-slate-600 uppercase tracking-[0.2em]">Selection</span>
-                  <span className="text-xs font-black text-slate-400">{selectedIds.size}</span>
+                  <span className="text-[10px] text-slate-500">Выбрано</span>
+                  <span className="text-sm font-semibold text-slate-300 tabular-nums">{selectedIds.size}</span>
                 </div>
              </div>
 
-              {/* Density Toggle */}
-              <div className="flex bg-slate-900/50 border border-white/5 p-1 rounded-2xl">
-                 <button 
-                  onClick={() => setDensity('comfortable')}
-                  className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${density === 'comfortable' ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/20' : 'text-slate-500 hover:text-slate-300'}`}
-                 >
-                   Comfortable
-                 </button>
-                 <button 
-                  onClick={() => setDensity('compact')}
-                  className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${density === 'compact' ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/20' : 'text-slate-500 hover:text-slate-300'}`}
-                 >
-                   Compact
-                 </button>
+              {listHydrated && loading && (
+                <span className="text-xs text-sky-400/90 font-medium flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
+                  Обновление списка…
+                </span>
+              )}
+
+              <div className="flex flex-col gap-1 min-w-[200px]">
+                <label htmlFor="lead-sort" className="text-[10px] text-slate-500">
+                  Сортировка
+                </label>
+                <select
+                  id="lead-sort"
+                  value={`${sortConfig.key}:${sortConfig.order}`}
+                  onChange={(e) => {
+                    const [key, order] = e.target.value.split(':') as [SortKey, SortOrder]
+                    setSortConfig({ key, order })
+                    setPage(1)
+                  }}
+                  className="bg-slate-950/90 border border-white/[0.1] rounded-lg px-3 py-2 text-xs text-slate-200 outline-none focus:border-sky-500/40 cursor-pointer"
+                >
+                  <option value="createdAt:desc">Сначала недавно добавленные</option>
+                  <option value="createdAt:asc">Сначала старые</option>
+                  <option value="name:asc">Компания А → Я</option>
+                  <option value="name:desc">Компания Я → А</option>
+                  <option value="icpScore:desc">Сначала выше ICP</option>
+                  <option value="icpScore:asc">Сначала ниже ICP</option>
+                  <option value="city:asc">Город А → Я</option>
+                  <option value="city:desc">Город Я → А</option>
+                  <option value="status:asc">Статус А → Я</option>
+                  <option value="status:desc">Статус Я → А</option>
+                  <option value="bin:asc">БИН по возрастанию</option>
+                  <option value="bin:desc">БИН по убыванию</option>
+                </select>
               </div>
 
+             <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              title="Показать или скрыть фильтры по городу, категории, ICP и статусу"
+              className={`px-3 py-3 rounded-xl border text-xs font-medium transition-colors ${
+                filtersOpen || activeFilterCount > 0 || scraperRunIdFilter
+                  ? 'bg-slate-800 border-sky-500/35 text-sky-200'
+                  : 'bg-slate-900 border-white/[0.08] text-slate-400 hover:text-slate-200'
+              }`}
+             >
+               Фильтры{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+             </button>
+
              <button 
-              onClick={() => fetchLeads()}
-              className="p-3.5 bg-slate-900 border border-white/5 rounded-2xl hover:bg-white/5 transition-colors text-slate-400 hover:text-white"
+              type="button"
+              onClick={() => {
+                needFiltersMetaRef.current = true;
+                void fetchLeads();
+              }}
+              title="Обновить страницу и счётчики фильтров с API"
+              className="p-3 bg-slate-900 border border-white/[0.08] rounded-xl hover:bg-slate-800 transition-colors text-slate-400 hover:text-white"
              >
                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
              </button>
@@ -257,163 +562,223 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
 
         {/* Bulk Action Toolbar - STICKY */}
         {selectedIds.size > 0 && (
-          <div className="flex items-center justify-between px-8 py-4 bg-brand-500 rounded-2xl shadow-2xl shadow-brand-500/40 animate-slide-up">
+          <div className="flex items-center justify-between px-8 py-4 rounded-2xl bg-gradient-to-r from-sky-600 to-cyan-600 shadow-xl shadow-sky-900/40 animate-slide-up">
             <div className="flex items-center gap-4">
-              <span className="text-xs font-black text-white uppercase tracking-widest">{selectedIds.size} Leads Selected</span>
+              <span className="text-xs font-black text-white uppercase tracking-widest">Выбрано лидов: {selectedIds.size}</span>
               <div className="w-px h-6 bg-white/20"></div>
-              <button className="text-[10px] font-bold text-white/80 hover:text-white transition-colors uppercase tracking-widest" onClick={() => setSelectedIds(new Set())}>Deselect All</button>
+              <button className="text-[10px] font-bold text-white/80 hover:text-white transition-colors uppercase tracking-widest" onClick={() => setSelectedIds(new Set())}>Снять выделение</button>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 className="px-5 py-2 bg-white/10 hover:bg-white/20 rounded-xl text-[10px] font-black text-white uppercase tracking-widest transition-all"
                 onClick={async () => {
+                  const n = selectedIds.size
                   try {
-                    const res = await fetch('/api/companies/bulk-action', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ ids: [...selectedIds], action: 'enrich' }),
-                    })
-                    if (!res.ok) throw new Error()
-                    toast(`Enrichment queued for ${selectedIds.size} leads`, 'success')
+                    await postBulkAction({ ids: [...selectedIds], action: 'enrich' })
+                    toast(`В очередь на обогащение: ${n} лидов`, 'success')
                     setSelectedIds(new Set())
-                  } catch {
-                    toast('Failed to queue enrichment', 'error')
+                  } catch (e) {
+                    toast(e instanceof Error ? e.message : 'Не удалось поставить обогащение в очередь', 'error')
                   }
                 }}
-              >Enrich Selection</button>
+              >Обогатить выбранные</button>
               <button
                 className="px-5 py-2 bg-white/10 hover:bg-white/20 rounded-xl text-[10px] font-black text-white uppercase tracking-widest transition-all"
                 onClick={async () => {
+                  const n = selectedIds.size
                   try {
-                    const res = await fetch('/api/companies/bulk-action', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ ids: [...selectedIds], action: 'archive' }),
-                    })
-                    if (!res.ok) throw new Error()
-                    toast(`Archived ${selectedIds.size} leads`, 'success')
+                    await postBulkAction({ ids: [...selectedIds], action: 'archive' })
+                    toast(`В архив: ${n} лидов`, 'success')
                     setSelectedIds(new Set())
-                    fetchLeads()
-                  } catch {
-                    toast('Failed to archive', 'error')
+                    needFiltersMetaRef.current = true
+                    await fetchLeads()
+                  } catch (e) {
+                    toast(e instanceof Error ? e.message : 'Не удалось отправить в архив', 'error')
                   }
                 }}
-              >Archive</button>
+              >В архив</button>
               <button
-                className="px-5 py-2 bg-white text-brand-600 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95"
+                className="px-5 py-2 bg-white/10 hover:bg-white/20 rounded-xl text-[10px] font-black text-white uppercase tracking-widest transition-all"
+                title="Вернуть статус (например, из архива)"
+                onClick={async () => {
+                  const n = selectedIds.size
+                  try {
+                    await postBulkAction({ ids: [...selectedIds], action: 'restore' })
+                    toast(`Восстановлено лидов: ${n}`, 'success')
+                    setSelectedIds(new Set())
+                    needFiltersMetaRef.current = true
+                    await fetchLeads()
+                  } catch (e) {
+                    toast(e instanceof Error ? e.message : 'Не удалось восстановить', 'error')
+                  }
+                }}
+              >Восстановить</button>
+              <button
+                className="px-5 py-2 bg-rose-600 hover:bg-rose-500 rounded-xl text-[10px] font-black text-white uppercase tracking-widest transition-all"
+                onClick={async () => {
+                  const n = selectedIds.size
+                  if (
+                    !window.confirm(
+                      `Удалить ${n} лид(ов) безвозвратно? Связанные контакты и строки журнала рассылки удалятся, насколько позволяет БД. Отменить нельзя.`,
+                    )
+                  ) {
+                    return
+                  }
+                  try {
+                    await postBulkAction({ ids: [...selectedIds], action: 'delete' })
+                    toast(`Удалено лидов: ${n}`, 'success')
+                    setSelectedIds(new Set())
+                    needFiltersMetaRef.current = true
+                    await fetchLeads()
+                  } catch (e) {
+                    toast(e instanceof Error ? e.message : 'Не удалось удалить', 'error')
+                  }
+                }}
+              >Удалить</button>
+              <button
+                className="px-5 py-2 bg-white text-sky-900 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95"
                 onClick={() => {
                   const params = new URLSearchParams()
-                  if (search) params.append('q', search)
+                  if (searchInput.trim()) params.append('q', searchInput.trim())
                   if (filterCity !== 'all') params.append('city', filterCity)
                   if (filterCategory !== 'all') params.append('category', filterCategory)
-                  const url = `/api/companies/export?${params.toString()}`
+                  if (filterSource !== 'all') params.append('source', filterSource)
+                  if (filterStatus !== 'all') params.append('status', filterStatus)
+                  if (filterIcp === 'high') { params.append('icpMin', '80'); }
+                  else if (filterIcp === 'medium') { params.append('icpMin', '40'); params.append('icpMax', '79'); }
+                  else if (filterIcp === 'low') { params.append('icpMax', '39'); }
+                  const url = apiUrl(`/api/companies/export?${params.toString()}`)
                   const a = document.createElement('a')
                   a.href = url
                   a.download = 'leads.csv'
                   a.click()
-                  toast('CSV download started', 'success')
+                  toast('Загрузка CSV начата', 'success')
                 }}
-              >Export CSV</button>
+              >Экспорт CSV</button>
             </div>
           </div>
         )}
 
-        {/* Global Multi-Filter Console */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 p-6 bg-slate-950/40 rounded-[2.5rem] border border-white/5 backdrop-blur-2xl">
-          <div className="flex flex-col gap-2">
-            <label className="text-[9px] font-black text-slate-550 uppercase tracking-[0.2em] ml-1">Jurisdiction</label>
+        {filtersOpen && (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 p-5 crm-panel rounded-2xl border border-white/[0.08]">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-slate-500">Город</label>
             <select 
               value={filterCity}
               onChange={(e) => {
                 setFilterCity(e.target.value)
                 setPage(1)
               }}
-              className="bg-slate-900 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-black text-slate-300 outline-none focus:border-brand-500/50 appearance-none cursor-pointer hover:bg-slate-800 transition-colors"
+              className="bg-slate-950/80 border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-sky-500/40 cursor-pointer"
             >
-              <option value="all">ALL CITIES</option>
-              {FILTER_CITIES.map((city) => (
-                <option key={city} value={city}>
-                  {city}
+              <option value="all">Все города</option>
+              {(filtersMeta?.cities ?? []).map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.value} ({c.count})
                 </option>
               ))}
             </select>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <label className="text-[9px] font-black text-slate-550 uppercase tracking-[0.2em] ml-1">Market Vertical</label>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-slate-500">Категория</label>
             <select 
               value={filterCategory}
               onChange={(e) => {
                 setFilterCategory(e.target.value)
                 setPage(1)
               }}
-              className="bg-slate-900 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-black text-slate-300 outline-none focus:border-brand-500/50 appearance-none cursor-pointer hover:bg-slate-800 transition-colors"
+              className="bg-slate-950/80 border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-sky-500/40 cursor-pointer"
             >
-              <option value="all">ALL SECTORS</option>
-              {FILTER_CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
+              <option value="all">Все категории</option>
+              {(filtersMeta?.uncategorizedCount ?? 0) > 0 && (
+                <option value="__empty__">Без категории ({filtersMeta?.uncategorizedCount})</option>
+              )}
+              {(filtersMeta?.categories ?? []).map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.value.length > 42 ? `${c.value.slice(0, 40)}…` : c.value} ({c.count})
                 </option>
               ))}
             </select>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <label className="text-[9px] font-black text-slate-550 uppercase tracking-[0.2em] ml-1">Data Origin</label>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-slate-500">Источник</label>
             <select 
               value={filterSource}
               onChange={(e) => {
                 setFilterSource(e.target.value)
                 setPage(1)
               }}
-              className="bg-slate-900 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-black text-slate-300 outline-none focus:border-brand-500/50 appearance-none cursor-pointer hover:bg-slate-800 transition-colors"
+              className="bg-slate-950/80 border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-sky-500/40 cursor-pointer"
             >
-              <option value="all">ALL SOURCES</option>
-              {['2gis', 'manual', 'enrichment', 're-scrape'].map(src => <option key={src} value={src}>{src.toUpperCase()}</option>)}
+              <option value="all">Все источники</option>
+              {sourceOptions.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.value} {s.count > 0 ? `(${s.count})` : ''}
+                </option>
+              ))}
             </select>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <label className="text-[9px] font-black text-slate-550 uppercase tracking-[0.2em] ml-1">ICP Scoring</label>
+          <div className="flex flex-col gap-1.5">
+            <label
+              className="text-xs font-medium text-slate-500"
+              title="ICP — насколько лид подходит вашему сегменту (0–100)."
+            >
+              Балл ICP
+            </label>
             <select 
               value={filterIcp}
               onChange={(e) => {
                 setFilterIcp(e.target.value)
                 setPage(1)
               }}
-              className="bg-slate-900 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-black text-slate-300 outline-none focus:border-brand-500/50 appearance-none cursor-pointer hover:bg-slate-800 transition-colors"
+              className="bg-slate-950/80 border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-sky-500/40 cursor-pointer"
+              title="Фильтр по ICP: высокий / средний / низкий"
             >
-              <option value="all">ANY SCORE</option>
-              <option value="high">HIGH FIT (80+)</option>
-              <option value="medium">MEDIUM (40-79)</option>
-              <option value="low">LOW FIT (&lt;40)</option>
+              <option value="all">Любой балл</option>
+              <option value="high">Высокий (80+)</option>
+              <option value="medium">Средний (40–79)</option>
+              <option value="low">Ниже (&lt;40)</option>
             </select>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <label className="text-[9px] font-black text-slate-550 uppercase tracking-[0.2em] ml-1">Intelligence</label>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-slate-500">Статус</label>
             <select 
               value={filterStatus}
               onChange={(e) => {
                 setFilterStatus(e.target.value)
                 setPage(1)
               }}
-              className="bg-slate-900 border border-white/5 rounded-xl px-4 py-3 text-[11px] font-black text-slate-300 outline-none focus:border-brand-500/50 appearance-none cursor-pointer hover:bg-slate-800 transition-colors"
+              className="bg-slate-950/80 border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-sky-500/40 cursor-pointer"
             >
-              <option value="all">ALL STATES</option>
-              {['new', 'valid', 'enriched', 'failed'].map(s => <option key={s} value={s}>{s.toUpperCase()}</option>)}
+              <option value="all">Все статусы</option>
+              {statusOptions.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {leadStatusLabel(s.value)} {s.count > 0 ? `(${s.count})` : ''}
+                </option>
+              ))}
             </select>
           </div>
         </div>
+        )}
       </div>
 
-      {/* High-Density Table */}
-      <div className="glass-card rounded-[2.5rem] overflow-hidden border border-white/5 shadow-2xl">
+      {/* Lead table — детали 2GIS, сайт, ICP — в боковой панели */}
+      <div
+        className={`crm-panel rounded-2xl overflow-hidden border border-white/[0.08] transition-opacity ${listHydrated && loading ? 'opacity-90' : ''}`}
+      >
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[1200px]">
+          <table
+            className="w-full text-left border-collapse min-w-[720px]"
+            aria-busy={loading}
+            aria-label="Лиды"
+          >
             <thead className="bg-slate-950/60 border-b border-white/5 text-slate-500">
               <tr>
-                <th className={`px-8 ${density === 'compact' ? 'py-3' : 'py-6'} w-10`}>
+                <th className={`px-5 py-5 w-10`}>
                   <div 
                     onClick={(e) => { e.stopPropagation(); toggleSelectAll(); }}
                     className={`w-5 h-5 rounded-md border-2 transition-all cursor-pointer flex items-center justify-center ${selectedIds.size === leads.length && leads.length > 0 ? 'bg-brand-500 border-brand-500' : 'border-white/10 hover:border-white/20'}`}
@@ -423,47 +788,71 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
                     )}
                   </div>
                 </th>
-                <th 
-                  className="px-8 py-6 text-[10px] font-black uppercase tracking-[0.2em] cursor-pointer hover:text-white transition-colors"
-                  onClick={() => handleSort('name')}
-                >
-                  <div className="flex items-center gap-2">
-                    IDENTIFICATION
-                    {sortConfig.key === 'name' && (
-                       <span className={sortConfig.order === 'asc' ? 'text-brand-400' : 'text-indigo-400'}>
-                         {sortConfig.order === 'asc' ? '↑' : '↓'}
-                       </span>
-                    )}
-                  </div>
+                <th className={`px-5 py-5 text-left align-bottom`}>
+                  <button
+                    type="button"
+                    onClick={() => handleSort('name')}
+                    className="text-left cursor-pointer group w-full"
+                  >
+                    <span className="block text-[10px] font-bold uppercase tracking-widest text-slate-300 group-hover:text-white">
+                      Компания
+                      {sortConfig.key === 'name' && (
+                        <span className={sortConfig.order === 'asc' ? ' text-brand-400' : ' text-indigo-400'}>
+                          {sortConfig.order === 'asc' ? ' ↑' : ' ↓'}
+                        </span>
+                      )}
+                    </span>
+                  </button>
                 </th>
                 <th 
-                  className={`px-8 ${density === 'compact' ? 'py-3' : 'py-6'} text-[10px] font-black uppercase tracking-[0.2em] cursor-pointer hover:text-white transition-colors`}
+                  className={`px-5 py-5 text-left align-bottom cursor-pointer hover:text-white`}
                   onClick={() => handleSort('city')}
                 >
-                  JURISDICTION
-                  {sortConfig.key === 'city' && <span className="ml-2 text-brand-400">{sortConfig.order === 'asc' ? '↑' : '↓'}</span>}
+                  <span className="block text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                    Город
+                    {sortConfig.key === 'city' && <span className="text-brand-400">{sortConfig.order === 'asc' ? ' ↑' : ' ↓'}</span>}
+                  </span>
                 </th>
-                <th className={`px-8 ${density === 'compact' ? 'py-3' : 'py-6'} text-[10px] font-black uppercase tracking-[0.2em]`}>CONTACT PULSE (ALL SIGNALS)</th>
-                <th className={`px-8 ${density === 'compact' ? 'py-3' : 'py-6'} text-[10px] font-black uppercase tracking-[0.2em]`}>CLASSIFICATION</th>
-                <th 
-                  className={`px-8 ${density === 'compact' ? 'py-3' : 'py-6'} text-[10px] font-black uppercase tracking-[0.2em] cursor-pointer hover:text-white transition-colors text-center`}
-                  onClick={() => handleSort('icpScore')}
+                <th className={`px-5 py-5 text-left align-bottom`}>
+                  <span className="block text-[10px] font-bold uppercase tracking-widest text-slate-300">Контакт</span>
+                </th>
+                <th
+                  className={`px-5 py-5 text-left align-bottom cursor-pointer hover:text-white whitespace-nowrap`}
+                  onClick={() => handleSort('createdAt')}
+                  title="Когда лид впервые сохранён в БД"
                 >
-                  ICP
-                  {sortConfig.key === 'icpScore' && <span className="ml-2 text-brand-400">{sortConfig.order === 'asc' ? '↑' : '↓'}</span>}
+                  <span className="block text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                    Добавлено
+                    {sortConfig.key === 'createdAt' && <span className="text-brand-400">{sortConfig.order === 'asc' ? ' ↑' : ' ↓'}</span>}
+                  </span>
                 </th>
-                <th className={`px-8 ${density === 'compact' ? 'py-3' : 'py-6'} text-[10px] font-black uppercase tracking-[0.2em] text-right`}>OPERATIONS</th>
+                <th className={`px-5 py-5 text-right align-bottom text-[10px] font-bold uppercase tracking-widest text-slate-300`}>Действия</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {paginatedLeads.map((lead) => (
+              {loading && !listHydrated ? (
+                <LeadTableSkeletonRows rows={8} />
+              ) : paginatedLeads.length === 0 && fetchError ? null : paginatedLeads.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-8 py-16 text-center">
+                    <p className="text-sm font-black uppercase tracking-widest text-slate-500">
+                      В таблице лидов пока пусто
+                    </p>
+                    <p className="mx-auto mt-3 max-w-lg text-xs leading-relaxed text-slate-400">
+                      Проверьте Postgres и <code className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-brand-300">npm run db:setup</code>
+                      , либо запустите сбор 2GIS.
+                    </p>
+                  </td>
+                </tr>
+              ) : (
+                paginatedLeads.map((lead, idx) => (
                 <tr 
                   key={lead?.id} 
+                  data-scraper-run-first-row={scraperRunIdFilter && idx === 0 ? '1' : undefined}
                   onClick={() => onLeadClick?.(lead)}
                   className="hover:bg-brand-500/[0.04] transition-all cursor-pointer group/row"
                 >
-                  {/* Selection Checkbox */}
-                  <td className={`px-8 ${density === 'compact' ? 'py-2' : 'py-6'}`}>
+                  <td className={`px-5 py-6`}>
                     <div 
                       onClick={(e) => toggleSelect(e, lead.id)}
                       className={`w-5 h-5 rounded-md border-2 transition-all flex items-center justify-center ${selectedIds.has(lead.id) ? 'bg-brand-500 border-brand-500' : 'border-white/10 group-hover/row:border-white/30'}`}
@@ -474,89 +863,91 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
                     </div>
                   </td>
 
-                  {/* Entity Information */}
-                  <td className={`px-8 ${density === 'compact' ? 'py-2' : 'py-6'}`}>
-                    <div className="flex items-center gap-5">
-                      <div className={`${density === 'compact' ? 'w-10 h-10 text-sm rounded-xl' : 'w-14 h-14 text-lg rounded-2xl'} bg-slate-900 border border-white/5 flex items-center justify-center font-black text-slate-500 group-hover/row:bg-brand-500/10 group-hover/row:text-brand-400 group-hover/row:border-brand-500/20 transition-all shadow-inner`}>
+                  <td className={`px-5 py-6`}>
+                    <div className="flex items-center gap-3 min-w-0 max-w-[min(100%,22rem)]">
+                      <div className={`shrink-0 w-11 h-11 text-sm rounded-xl bg-slate-900 border border-white/5 flex items-center justify-center font-bold text-slate-500 group-hover/row:bg-brand-500/10 group-hover/row:text-brand-400 transition-colors`}>
                         {lead?.name?.charAt(0) || '?'}
                       </div>
-                      <div className="space-y-1">
-                        <h4 className="text-[13px] font-black text-slate-100 group-hover/row:text-white transition-colors">{lead?.name || 'UNKNOWN_ENTITY'}</h4>
-                        <div className="flex items-center gap-3">
-                           <span className="text-[10px] font-bold text-slate-550 font-mono">{lead?.bin || 'GCR_NULL'}</span>
-                           <SourceBadge source={lead?.source} />
-                           <StatusBadge status={lead?.status} />
+                      <div className="min-w-0 space-y-1 select-text">
+                        <h4 className="text-[13px] font-semibold text-slate-100 truncate" title={lead?.name || ''}>
+                          {lead?.name || '—'}
+                        </h4>
+                        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-slate-500">
+                          <span className="font-mono text-slate-400">{lead?.bin || '—'}</span>
+                          <span className="text-slate-600">·</span>
+                          <SourceBadge source={lead?.source} />
+                          <StatusBadge status={lead?.status} />
                         </div>
+                        {(lead.category || lead.twogisCardCategory || lead.rating2gis?.trim()) && (
+                          <>
+                            <p
+                              className="text-[10px] text-slate-500 truncate"
+                              title={[lead.category, lead.rating2gis?.trim() ? `★ ${lead.rating2gis}` : ''].filter(Boolean).join(' · ')}
+                            >
+                              {lead.category
+                                ? lead.category.length > 40
+                                  ? `${lead.category.slice(0, 38)}…`
+                                  : lead.category
+                                : ''}
+                              {lead.category && lead.rating2gis?.trim() ? ' · ' : ''}
+                              {lead.rating2gis?.trim() ? `★ ${lead.rating2gis}` : ''}
+                            </p>
+                            {lead.twogisCardCategory?.trim() ? (
+                              <p
+                                className="text-[10px] text-slate-500/85 truncate"
+                                title={lead.twogisCardCategory}
+                              >
+                                2GIS:{' '}
+                                {lead.twogisCardCategory.length > 48
+                                  ? `${lead.twogisCardCategory.slice(0, 46)}…`
+                                  : lead.twogisCardCategory}
+                              </p>
+                            ) : null}
+                          </>
+                        )}
                       </div>
                     </div>
                   </td>
 
-                  {/* Jurisdiction */}
-                  <td className={`px-8 ${density === 'compact' ? 'py-2' : 'py-6'}`}>
-                    <div className="flex flex-col gap-1">
-                      <span className="text-xs font-black text-slate-200 group-hover/row:text-brand-400 transition-colors">{lead?.city?.toUpperCase() || 'GLOBAL'}</span>
-                      <span className="text-[9px] text-slate-500 max-w-[180px] break-words font-bold uppercase tracking-tighter" title={lead?.address || ''}>
-                        {lead?.address || 'Geolocation unknown'}
-                      </span>
-                    </div>
+                  <td
+                    className={`px-5 py-6 select-text max-w-[10rem]`}
+                    title={
+                      lead?.address?.trim()
+                        ? `${lead?.city || ''}${lead?.city ? ' — ' : ''}${lead.address}`
+                        : (lead?.city || '')
+                    }
+                  >
+                    <span className="text-xs font-medium text-slate-200 line-clamp-2">
+                      {lead?.city || '—'}
+                    </span>
                   </td>
 
-                  {/* All Contact Signals - DENSE GRID */}
-                  <td className={`px-8 ${density === 'compact' ? 'py-2' : 'py-6'}`}>
-                    <div className="flex flex-wrap gap-2 max-w-[350px]">
-                       {lead.contacts && lead.contacts.length > 0 ? (
-                         lead.contacts.map((c, i) => <ContactPill key={i} contact={c} />)
-                       ) : (
-                         <div className="text-[9px] font-black text-slate-700 uppercase italic tracking-widest bg-slate-900/50 px-3 py-1.5 rounded-lg border border-white/5">
-                           Intelligence enrichment required
-                         </div>
-                       )}
-                    </div>
+                  <td className={`px-5 py-6 max-w-[14rem]`}>
+                    <LeadReachSummary lead={lead} />
                   </td>
 
-                  {/* Vertical Classification */}
-                  <td className={`px-8 ${density === 'compact' ? 'py-2' : 'py-6'}`}>
-                    {lead.category ? (
-                      <div className="flex flex-col gap-1.5">
-                        <span className="px-3 py-1 rounded-xl bg-indigo-500/10 border border-indigo-400/20 text-[9px] font-black text-indigo-300 uppercase tracking-[0.15em] text-center shadow-lg">
-                          {lead.category}
-                        </span>
-                        <div className="flex justify-center gap-1 opacity-40">
-                           <div className="w-1 h-1 rounded-full bg-indigo-500"></div>
-                           <div className="w-1 h-1 rounded-full bg-indigo-500"></div>
-                           <div className="w-1 h-1 rounded-full bg-indigo-500"></div>
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-[9px] font-black text-slate-700 uppercase tracking-widest opacity-20 italic">Node Unclassified</span>
-                    )}
+                  <td
+                    className={`px-5 py-6 text-[11px] text-slate-400 font-medium tabular-nums whitespace-nowrap`}
+                    title={lead.createdAt ? new Date(lead.createdAt).toISOString() : undefined}
+                  >
+                    {formatAddedAt(lead.createdAt)}
                   </td>
 
-                  {/* ICP Score */}
-                  <td className={`px-8 ${density === 'compact' ? 'py-2' : 'py-6'} text-center`}>
-                    <div className="inline-flex flex-col items-center">
-                       <span className={`text-xl font-black ${(lead.icpScore || 0) >= 80 ? 'text-brand-400 mt-glow' : (lead.icpScore || 0) >= 40 ? 'text-indigo-400' : 'text-slate-500'}`}>
-                         {lead.icpScore || 0}
-                       </span>
-                       <span className="text-[8px] font-black text-slate-600 uppercase tracking-tighter">FIT_INDEX</span>
-                    </div>
-                  </td>
-
-                  {/* Actions */}
-                  <td className={`px-8 ${density === 'compact' ? 'py-2' : 'py-6'} text-right`}>
+                  <td className={`px-5 py-6 text-right`}>
                     <div className="flex justify-end gap-3 opacity-0 group-hover/row:opacity-100 transition-all translate-x-4 group-hover/row:translate-x-0">
                       <button 
                         onClick={(e) => handleEnrich(e, lead?.id)}
                         disabled={enrichingId === lead?.id}
-                        className={`${density === 'compact' ? 'w-8 h-8' : 'w-11 h-11'} rounded-2xl bg-slate-900 border border-white/5 text-slate-400 hover:text-brand-400 hover:bg-brand-500/10 hover:border-brand-500/30 transition-all active:scale-95 flex items-center justify-center shadow-2xl`}
-                        title="Deep Neural Pulse"
+                        className={`w-11 h-11 rounded-2xl bg-slate-900 border border-white/5 text-slate-400 hover:text-brand-400 hover:bg-brand-500/10 hover:border-brand-500/30 transition-all active:scale-95 flex items-center justify-center shadow-2xl`}
+                        title="Поставить обогащение в очередь"
                       >
-                         <svg xmlns="http://www.w3.org/2000/svg" width={density === 'compact' ? "14" : "20"} height={density === 'compact' ? "14" : "20"} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
                       </button>
                     </div>
                   </td>
                 </tr>
-              ))}
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -565,7 +956,17 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
         <div className="p-8 bg-slate-950/60 border-t border-white/5 flex flex-col md:flex-row justify-between items-center gap-6">
            <div className="flex items-center gap-4">
               <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                 Showing <span className="text-brand-400">{(page - 1) * pageSize + 1} - {Math.min(page * pageSize, total)}</span> of <span className="text-white">{total.toLocaleString()}</span> entities
+                {loading && !listHydrated ? (
+                  <span className="text-slate-600">Загрузка диапазона…</span>
+                ) : (
+                  <>
+                    Показано{' '}
+                    <span className="text-brand-400">
+                      {(page - 1) * pageSize + 1} — {Math.min(page * pageSize, total)}
+                    </span>{' '}
+                    из <span className="text-white">{total.toLocaleString()}</span>
+                  </>
+                )}
               </div>
            </div>
            
@@ -575,7 +976,7 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
                disabled={page === 1}
                className="p-3 rounded-xl bg-slate-900 border border-white/5 text-slate-500 hover:text-white disabled:opacity-20 transition-all font-black text-[10px]"
              >
-               FIRST
+               НАЧАЛО
              </button>
              <button 
                onClick={(e) => { e.stopPropagation(); setPage(p => Math.max(1, p - 1)); }}
@@ -603,16 +1004,24 @@ export function LeadsTable({ onLeadClick }: LeadsTableProps) {
                disabled={page === totalPages || totalPages === 0}
                className="p-3 rounded-xl bg-slate-900 border border-white/5 text-slate-500 hover:text-white disabled:opacity-20 transition-all font-black text-[10px]"
              >
-               LAST
+               КОНЕЦ
              </button>
            </div>
 
            {leads.length === 0 && !loading && (
              <button 
-                onClick={() => {setSearch(''); setFilterCategory('all'); setFilterStatus('all'); setFilterCity('all'); setFilterSource('all'); setFilterIcp('all'); setPage(1);}}
+                onClick={() => {
+                  setSearchInput('');
+                  setFilterCategory('all');
+                  setFilterStatus('all');
+                  setFilterCity('all');
+                  setFilterSource('all');
+                  setFilterIcp('all');
+                  setPage(1);
+                }}
                 className="text-xs font-black text-brand-500 uppercase tracking-widest hover:underline underline-offset-8 decoration-2"
               >
-                Flush Operational Filters
+                Сбросить фильтры
               </button>
            )}
         </div>

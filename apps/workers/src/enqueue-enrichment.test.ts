@@ -88,31 +88,31 @@ describe('enqueueEnrichmentForLeads', () => {
     expect(addTwogis).toHaveBeenCalledWith(
       'enrich',
       { leadId: 'lead-full' },
-      { ...jobOptsBase, jobId: 'twogis:lead-full' }
+      { ...jobOptsBase, jobId: 'twogis-lead-full' }
     )
     expect(addWebsite).toHaveBeenCalledTimes(1)
     expect(addWebsite).toHaveBeenCalledWith(
       'enrich',
       { leadId: 'lead-full', website: 'https://example.com' },
-      { ...jobOptsBase, jobId: 'web:lead-full' }
+      { ...jobOptsBase, jobId: 'web-lead-full' }
     )
     expect(addStat).toHaveBeenCalledTimes(1)
     expect(addStat).toHaveBeenCalledWith(
       'enrich',
       { leadId: 'lead-full', bin: '123456789012' },
-      { ...jobOptsBase, jobId: 'stat:lead-full' }
+      { ...jobOptsBase, jobId: 'stat-lead-full' }
     )
     expect(addUchet).toHaveBeenCalledTimes(1)
     expect(addUchet).toHaveBeenCalledWith(
       'enrich',
       { leadId: 'lead-full', bin: '123456789012' },
-      { ...jobOptsBase, jobId: 'uchet:lead-full' }
+      { ...jobOptsBase, jobId: 'uchet-lead-full' }
     )
     expect(addGoszakup).toHaveBeenCalledTimes(1)
     expect(addGoszakup).toHaveBeenCalledWith(
       'enrich',
       { leadId: 'lead-full', bin: '123456789012' },
-      { ...jobOptsBase, jobId: 'gzk:lead-full' }
+      { ...jobOptsBase, jobId: 'gzk-lead-full' }
     )
   })
 

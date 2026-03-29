@@ -23,12 +23,71 @@ export function normalizeFirmUrl(href: string): string {
     u.hash = ''
     u.search = ''
     if (!u.pathname.includes('/firm/')) return href.trim()
+    const parts = u.pathname.split('/').filter(Boolean)
+    const city = parts.length >= 3 && parts[1] === 'firm' ? parts[0] : null
+    const rawFirmToken = parts.length >= 3 && parts[1] === 'firm'
+      ? parts[2]
+      : parts.length >= 2 && parts[0] === 'firm'
+        ? parts[1]
+        : null
+    if (rawFirmToken) {
+      const idMatch = rawFirmToken.match(/^([0-9]{8,})/)
+      if (idMatch?.[1]) {
+        const id = idMatch[1]
+        let out = city ? `https://2gis.kz/${city}/firm/${id}` : `https://2gis.kz/firm/${id}`
+        if (out.endsWith('/')) out = out.slice(0, -1)
+        return out
+      }
+    }
     let out = u.toString()
     if (out.endsWith('/')) out = out.slice(0, -1)
     return out
   } catch {
     return href.trim()
   }
+}
+
+export function citySlugFromSearchUrl(searchUrl: string): string | null {
+  try {
+    const u = new URL(searchUrl)
+    const parts = u.pathname.split('/').filter(Boolean)
+    if (parts.length < 2) return null
+    if (parts[1] !== 'search') return null
+    const city = parts[0]?.trim().toLowerCase()
+    return city || null
+  } catch {
+    return null
+  }
+}
+
+export function normalizeFirmUrlForSearchCity(href: string, citySlug: string | null): string | null {
+  const normalized = normalizeFirmUrl(href)
+  if (!normalized.includes('/firm/')) return null
+  try {
+    const u = new URL(normalized)
+    const parts = u.pathname.split('/').filter(Boolean)
+    if (parts.length >= 3 && parts[1] === 'firm') {
+      const city = parts[0]?.toLowerCase()
+      if (!citySlug || city === citySlug) return normalized
+      return null
+    }
+    if (parts.length >= 2 && parts[0] === 'firm' && citySlug) {
+      return `https://2gis.kz/${citySlug}/firm/${parts[1]}`
+    }
+    return citySlug ? null : normalized
+  } catch {
+    return null
+  }
+}
+
+function applySearchCityFilter(links: Set<string>, searchUrl: string): Set<string> {
+  const citySlug = citySlugFromSearchUrl(searchUrl)
+  const out = new Set<string>()
+  for (const href of links) {
+    const normalized = normalizeFirmUrlForSearchCity(href, citySlug)
+    if (normalized) out.add(normalized)
+  }
+  return out
 }
 
 function shouldTryParseCatalogUrl(url: string): boolean {
@@ -138,6 +197,9 @@ export interface ListPhaseScrollConfig {
   scrollWaitMs: number
 }
 
+/** Must match slow 2GIS + residential proxy; was 60s and aborted after Crawlee allowed 240s. */
+const LIST_PAGE_GOTO_TIMEOUT_MS = 240_000
+
 /**
  * DOM: scroll + anchor scan only.
  * Network: tap catalog.api.2gis JSON during goto + scroll (no DOM link harvest); falls back to DOM if zero URLs.
@@ -152,13 +214,34 @@ export async function runSearchListPhase(
 ): Promise<{ links: string[]; metrics: TwogisListPhaseMetrics }> {
   const { initialWaitMs, maxScrolls, scrollWaitMs } = scroll
 
+  /** Stop after two scrolls with no new `/firm/` anchors (list height stable) — saves several seconds per search page. */
+  async function scrollForNetworkTriggers(): Promise<void> {
+    let prevFirmAnchors = -1
+    let stableRounds = 0
+    for (let i = 0; i < maxScrolls; i++) {
+      await page.evaluate(() => window.scrollBy(0, 3000))
+      await page.waitForTimeout(scrollWaitMs)
+      const n = await page.evaluate(
+        () => document.querySelectorAll('a[href*="/firm/"]').length
+      )
+      if (i >= 2 && n === prevFirmAnchors) {
+        stableRounds++
+        if (stableRounds >= 2) break
+      } else {
+        stableRounds = 0
+      }
+      prevFirmAnchors = n
+    }
+  }
+
   if (strategy === 'dom') {
-    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: LIST_PAGE_GOTO_TIMEOUT_MS })
     await page.waitForTimeout(initialWaitMs)
+    await scrollForNetworkTriggers()
     const d0 = Date.now()
     const domLinks = await collectDomLinks(page)
     const domMs = Date.now() - d0
-    const domSet = new Set(domLinks.map(normalizeFirmUrl))
+    const domSet = applySearchCityFilter(new Set(domLinks.map(normalizeFirmUrl)), searchUrl)
     return {
       links: [...domSet],
       metrics: {
@@ -177,29 +260,22 @@ export async function runSearchListPhase(
     }
   }
 
-  async function scrollForNetworkTriggers(): Promise<void> {
-    for (let i = 0; i < maxScrolls; i++) {
-      await page.evaluate(() => window.scrollBy(0, 3000))
-      await page.waitForTimeout(scrollWaitMs)
-    }
-  }
-
   if (strategy === 'network') {
     const tap = attachCatalogResponseTap(page)
     const nw0 = Date.now()
-    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: LIST_PAGE_GOTO_TIMEOUT_MS })
     await page.waitForTimeout(initialWaitMs)
     await scrollForNetworkTriggers()
     const snap = tap.snapshot()
     tap.dispose()
     const networkWallMs = Date.now() - nw0
-    const netSet = new Set([...snap.urls].map(normalizeFirmUrl))
+    const netSet = applySearchCityFilter(new Set([...snap.urls].map(normalizeFirmUrl)), searchUrl)
 
     if (netSet.size === 0) {
       const d0 = Date.now()
       const domLinks = await collectDomLinks(page)
       const domMs = Date.now() - d0
-      const domSet = new Set(domLinks.map(normalizeFirmUrl))
+      const domSet = applySearchCityFilter(new Set(domLinks.map(normalizeFirmUrl)), searchUrl)
       return {
         links: [...domSet],
         metrics: {
@@ -239,8 +315,9 @@ export async function runSearchListPhase(
   // hybrid
   const tap = attachCatalogResponseTap(page)
   const wall0 = Date.now()
-  await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 })
+  await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: LIST_PAGE_GOTO_TIMEOUT_MS })
   await page.waitForTimeout(initialWaitMs)
+  await scrollForNetworkTriggers()
   const d0 = Date.now()
   const domLinks = await collectDomLinks(page)
   const domMs = Date.now() - d0
@@ -248,13 +325,19 @@ export async function runSearchListPhase(
   tap.dispose()
   const networkWallMs = Date.now() - wall0
 
-  const domSet = new Set(domLinks.map(normalizeFirmUrl))
-  const netSet = new Set([...snap.urls].map(normalizeFirmUrl))
+  const domSet = applySearchCityFilter(new Set(domLinks.map(normalizeFirmUrl)), searchUrl)
+  const netSet = applySearchCityFilter(new Set([...snap.urls].map(normalizeFirmUrl)), searchUrl)
   let overlap = 0
   for (const u of domSet) {
     if (netSet.has(u)) overlap++
   }
-  const union = new Set<string>([...domSet, ...netSet])
+  /**
+   * Prefer DOM (visible search column). Catalog JSON also fires for map/recommendations — unioning net-only
+   * URLs pulls unrelated rubrics (e.g. lifts) while searching «университет».
+   */
+  const union = new Set<string>(
+    domSet.size > 0 ? [...domSet] : [...netSet],
+  )
 
   return {
     links: [...union],
@@ -269,7 +352,7 @@ export async function runSearchListPhase(
       onlyDomCount: domSet.size - overlap,
       onlyNetworkCount: netSet.size - overlap,
       catalogJsonResponses: snap.catalogJsonResponses,
-      networkFallbackToDom: false,
+      networkFallbackToDom: domSet.size === 0 && netSet.size > 0,
     },
   }
 }

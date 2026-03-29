@@ -9,10 +9,23 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
+    "dev:web": "turbo run dev --filter=@leadiya/api --filter=dashboard",
+    "dev:web:stable": "node scripts/dev-web-stable.mjs",
+    "dev:dashboard": "npm run dev -w dashboard",
+    "dev:api": "npm run dev:api-only -w @leadiya/api",
     "lint": "turbo run lint",
     "test": "vitest run",
     "benchmark:2gis": "npx tsx scripts/benchmark-2gis-scrape.ts",
-    "test:stage2-http": "npx tsx scripts/test-stage2-http.ts"
+    "test:stage2-http": "npx tsx scripts/test-stage2-http.ts",
+    "smoke:kz-apis": "npx tsx scripts/kz-official-apis-smoke.ts",
+    "db:migrate": "npm run db:migrate -w @leadiya/db",
+    "db:apply:0004-twogis-card-category": "npx tsx --env-file=.env scripts/apply-migration-0004-twogis-card-category.ts",
+    "db:seed": "npm run db:seed -w @leadiya/db",
+    "db:setup": "npm run db:migrate && npm run db:seed",
+    "verify:agent-api": "node scripts/verify-agent-api.mjs",
+    "verify:agent-outreach": "node scripts/verify-agent-api.mjs",
+    "setup:agent-bridge": "node scripts/setup-agent-bridge.mjs",
+    "backfill:twogis-card-category": "npx tsx --env-file=.env scripts/backfill-twogis-card-category.ts"
   },
   "devDependencies": {
     "esbuild": "^0.27.4",

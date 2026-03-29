@@ -40,7 +40,7 @@ export async function enqueueEnrichmentForLeads(leadIds: string[]) {
       await twogisEnrichQueue.add(
         'enrich',
         { leadId: lead.id },
-        { ...jobOpts, jobId: `twogis:${lead.id}` }
+        { ...jobOpts, jobId: `twogis-${lead.id}` }
       )
     }
 
@@ -48,7 +48,7 @@ export async function enqueueEnrichmentForLeads(leadIds: string[]) {
       await websiteEnrichQueue.add(
         'enrich',
         { leadId: lead.id, website: lead.website },
-        { ...jobOpts, jobId: `web:${lead.id}` }
+        { ...jobOpts, jobId: `web-${lead.id}` }
       )
     }
 
@@ -56,7 +56,7 @@ export async function enqueueEnrichmentForLeads(leadIds: string[]) {
       await statEnrichQueue.add(
         'enrich',
         { leadId: lead.id, bin: lead.bin },
-        { ...jobOpts, jobId: `stat:${lead.id}` }
+        { ...jobOpts, jobId: `stat-${lead.id}` }
       )
     }
 
@@ -64,7 +64,7 @@ export async function enqueueEnrichmentForLeads(leadIds: string[]) {
       await uchetEnrichQueue.add(
         'enrich',
         { leadId: lead.id, bin: lead.bin },
-        { ...jobOpts, jobId: `uchet:${lead.id}` }
+        { ...jobOpts, jobId: `uchet-${lead.id}` }
       )
     }
 
@@ -72,7 +72,7 @@ export async function enqueueEnrichmentForLeads(leadIds: string[]) {
       await goszakupEnrichQueue.add(
         'enrich',
         { leadId: lead.id, bin: lead.bin },
-        { ...jobOpts, jobId: `gzk:${lead.id}` }
+        { ...jobOpts, jobId: `gzk-${lead.id}` }
       )
     }
   }

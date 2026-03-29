@@ -15,6 +15,27 @@
       "when": 1742649600000,
       "tag": "0001_outreach_log_lead_id",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1742700000000,
+      "tag": "0002_outreach_log_wa_peer",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1742800000000,
+      "tag": "0003_scraper_runs_stats",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1742900000000,
+      "tag": "0004_twogis_card_category",
+      "breakpoints": true
     }
   ]
 }

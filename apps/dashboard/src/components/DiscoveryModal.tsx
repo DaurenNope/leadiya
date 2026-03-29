@@ -4,7 +4,13 @@ import { TWOGIS_DEFAULT_CATEGORIES } from '@leadiya/types';
 interface DiscoveryModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onLaunch: (payload: { cities: string[]; categories: string[] }) => void;
+  onLaunch: (payload: {
+    cities: string[];
+    categories: string[];
+    skipProxy?: boolean;
+    /** false = show Chromium window (dev; server needs display / Xvfb). Default true. */
+    headless?: boolean;
+  }) => void;
 }
 
 const CITIES = [
@@ -27,46 +33,60 @@ export function DiscoveryModal({ isOpen, onClose, onLaunch }: DiscoveryModalProp
   const [customCategories, setCustomCategories] = useState<string[]>([]);
   const [customInput, setCustomInput] = useState('');
   const [isLaunching, setIsLaunching] = useState(false);
+  /** Same as benchmark `skipProxy` — bypasses SMARTPROXY_* when 2GIS hangs behind residential IP. */
+  const [skipProxy, setSkipProxy] = useState(true);
+  /** When true, Playwright uses headless: false — you see the browser on the API host; logs also list URLs. */
+  const [showBrowser, setShowBrowser] = useState(false);
 
   const mergedCategories = useMemo(() => {
-    const set = new Set<string>([...selectedPresets, ...customCategories]);
-    return [...set];
+    // UI intentionally enforces exactly one category (preset OR custom).
+    const custom = customCategories[0]?.trim()
+    if (custom) return [custom]
+    const preset = selectedPresets[0]?.trim()
+    return preset ? [preset] : []
   }, [selectedPresets, customCategories]);
 
   if (!isOpen) return null;
 
   const toggleCity = (city: string) => {
-    setSelectedCities(prev => 
-      prev.includes(city) ? prev.filter(c => c !== city) : [...prev, city]
-    );
+    // UI intentionally enforces exactly one city.
+    setSelectedCities([city]);
   };
 
   const togglePreset = (cat: string) => {
-    setSelectedPresets(prev => 
-      prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
-    );
+    // Choosing a preset clears custom; UI enforces exactly one category.
+    setCustomCategories([])
+    setSelectedPresets([cat])
   };
 
   const addCustomFromInput = () => {
-    const next = parseCategoryTokens(customInput);
-    if (next.length === 0) return;
-    setCustomCategories((prev) => {
-      const s = new Set(prev);
-      for (const t of next) s.add(t);
-      return [...s];
-    });
-    setCustomInput('');
+    const next = parseCategoryTokens(customInput)
+    const first = next[0]
+    if (!first) return
+    // Choosing a custom category clears presets; UI enforces exactly one category.
+    setSelectedPresets([])
+    setCustomCategories([first])
+    setCustomInput('')
   };
 
   const removeCustom = (cat: string) => {
-    setCustomCategories((prev) => prev.filter((c) => c !== cat));
+    void cat
+    setCustomCategories([])
   };
 
   const handleLaunch = async () => {
-    if (selectedCities.length === 0 || mergedCategories.length === 0) return;
+    // Defensive: keep payload strictly 1×1 even if state changes.
+    const city = selectedCities[0]
+    const category = mergedCategories[0]
+    if (!city || !category) return;
     setIsLaunching(true);
     try {
-      await onLaunch({ cities: selectedCities, categories: mergedCategories });
+      await onLaunch({
+        cities: [city],
+        categories: [category],
+        ...(skipProxy ? { skipProxy: true } : {}),
+        headless: !showBrowser,
+      });
       onClose();
     } finally {
       setIsLaunching(false);
@@ -83,8 +103,11 @@ export function DiscoveryModal({ isOpen, onClose, onLaunch }: DiscoveryModalProp
       <div className="relative w-full max-w-2xl glass-card rounded-[2.5rem] shadow-2xl overflow-hidden animate-fade-in border-brand-500/10">
         <div className="p-10 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
           <div>
-            <h2 className="text-2xl font-black tracking-tight premium-gradient-text uppercase">Sync Engine Config</h2>
-            <p className="text-slate-500 text-[10px] mt-1 font-black uppercase tracking-widest italic opacity-60">Intelligence Parameterization</p>
+            <h2 className="text-2xl font-bold tracking-tight text-white">Новая задача сбора 2GIS</h2>
+            <p className="text-slate-500 text-sm mt-1">
+              Выбор города и категории. API запускает Playwright на сервере — закрепите запуск кнопкой <strong className="text-slate-400">Следить</strong> в разделе задач 2GIS;
+              баннер обновляется каждые несколько секунд, пока задача идёт.
+            </p>
           </div>
           <button 
             onClick={onClose}
@@ -98,9 +121,9 @@ export function DiscoveryModal({ isOpen, onClose, onLaunch }: DiscoveryModalProp
           {/* Cities Section */}
           <section>
             <div className="flex items-center justify-between mb-6">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Target Jurisdictions</label>
-              <div className="px-3 py-1 bg-brand-500/10 rounded-lg border border-brand-500/20 text-[9px] font-black text-brand-400 uppercase tracking-widest">
-                {selectedCities.length} Regions
+              <label className="text-xs font-semibold text-slate-400">Города</label>
+              <div className="px-3 py-1 bg-brand-500/10 rounded-lg border border-brand-500/20 text-[10px] font-bold text-brand-400">
+                Выбран 1
               </div>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -126,14 +149,14 @@ export function DiscoveryModal({ isOpen, onClose, onLaunch }: DiscoveryModalProp
           {/* Categories Section */}
           <section>
             <div className="flex items-center justify-between mb-6">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Industry Verticals</label>
-              <div className="px-3 py-1 bg-indigo-500/10 rounded-lg border border-indigo-500/20 text-[9px] font-black text-indigo-400 uppercase tracking-widest">
-                {mergedCategories.length} Segments
+              <label className="text-xs font-semibold text-slate-400">Категории</label>
+              <div className="px-3 py-1 bg-indigo-500/10 rounded-lg border border-indigo-500/20 text-[10px] font-bold text-indigo-400">
+                {mergedCategories.length > 0 ? 'Выбрана 1' : 'Не выбрано'}
               </div>
             </div>
 
             <div className="mb-6 space-y-3">
-              <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Custom queries</label>
+              <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Свой запрос</label>
               <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="text"
@@ -145,7 +168,7 @@ export function DiscoveryModal({ isOpen, onClose, onLaunch }: DiscoveryModalProp
                       addCustomFromInput();
                     }
                   }}
-                  placeholder="Например: ветеринарные клиники, коворкинг"
+                  placeholder="Например: университеты, ветклиники"
                   className="flex-1 px-4 py-3 rounded-2xl text-[11px] font-medium bg-slate-950/50 border border-white/10 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500/30"
                 />
                 <button
@@ -153,11 +176,12 @@ export function DiscoveryModal({ isOpen, onClose, onLaunch }: DiscoveryModalProp
                   onClick={addCustomFromInput}
                   className="px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest bg-slate-800 border border-white/10 text-slate-300 hover:bg-slate-700 hover:text-white transition-all shrink-0"
                 >
-                  Add
+                  Добавить
                 </button>
               </div>
               <p className="text-[9px] text-slate-600 font-medium leading-relaxed">
-                Several terms at once: separate with comma, semicolon, or new line. Custom terms are merged with selected presets.
+                Несколько фраз: через запятую, точку с запятой или с новой строки. Свой запрос заменяет выбранный пресет.
+                Формулируйте запрос так же, как в поиске на 2GIS (русский/казахский обычно совпадают с рубриками).
               </p>
               {customCategories.length > 0 && (
                 <div className="flex flex-wrap gap-2 pt-1">
@@ -171,7 +195,7 @@ export function DiscoveryModal({ isOpen, onClose, onLaunch }: DiscoveryModalProp
                         type="button"
                         onClick={() => removeCustom(cat)}
                         className="p-1 rounded-lg text-amber-400/80 hover:bg-amber-500/20 hover:text-amber-100 transition-colors"
-                        aria-label={`Remove ${cat}`}
+                        aria-label={`Удалить ${cat}`}
                       >
                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                       </button>
@@ -202,26 +226,51 @@ export function DiscoveryModal({ isOpen, onClose, onLaunch }: DiscoveryModalProp
           </section>
         </div>
 
-        <div className="p-10 bg-white/[0.02] border-t border-white/5 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-             <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Engine Ready</span>
+        <div className="p-10 bg-white/[0.02] border-t border-white/5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="space-y-3 max-w-xl">
+            <label className="flex items-start gap-3 cursor-pointer text-left">
+              <input
+                type="checkbox"
+                checked={skipProxy}
+                onChange={(e) => setSkipProxy(e.target.checked)}
+                className="mt-1 rounded border-white/20 bg-slate-950"
+              />
+              <span className="text-xs text-slate-400 leading-snug">
+                <strong className="text-slate-300">Прямое подключение</strong> — без SmartProxy (локально/дев или когда скрапер зависает за прокси).
+              </span>
+            </label>
+            <label className="flex items-start gap-3 cursor-pointer text-left">
+              <input
+                type="checkbox"
+                checked={showBrowser}
+                onChange={(e) => setShowBrowser(e.target.checked)}
+                className="mt-1 rounded border-white/20 bg-slate-950"
+              />
+              <span className="text-xs text-slate-400 leading-snug">
+                <strong className="text-slate-300">Показать окно браузера</strong> — Playwright с{' '}
+                <code className="text-slate-500">headless: false</code> на машине, где крутится API (нужен дисплей или Xvfb). В логах API также видны URL (
+                <code className="text-slate-500">TWOGIS_LOG_NAVIGATION=1</code> для headless).
+              </span>
+            </label>
+            <p className="text-xs text-slate-500">
+              Одновременно на API может идти только одна задача 2GIS. Большие матрицы долгие — смотрите баннер статуса на главном экране.
+            </p>
           </div>
-          <div className="flex gap-4">
+          <div className="flex gap-4 justify-end">
             <button 
               onClick={handleLaunch}
-              disabled={isLaunching || selectedCities.length === 0 || mergedCategories.length === 0}
-              className="bg-white text-black hover:bg-brand-500 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed px-10 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.25em] shadow-2xl transition-all flex items-center gap-3 active:scale-[0.98]"
+              disabled={isLaunching || mergedCategories.length === 0}
+              className="bg-emerald-500 text-white hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed px-8 py-3.5 rounded-2xl text-sm font-bold shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-2 active:scale-[0.98]"
             >
               {isLaunching ? (
                 <>
-                  <div className="w-3 h-3 border-2 border-slate-950/20 border-t-slate-950 rounded-full animate-spin" />
-                  INIT_SEQUENCE...
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Запуск…
                 </>
               ) : (
                 <>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><path d="m12 14 4-4-4-4"/><path d="M3 3.44a2.1 2.1 0 0 1 2.1 2.1 2.1 2.1 0 0 1-2.1 2.1"/><path d="M3 11.41a2.1 2.1 0 0 1 2.1 2.1 2.1 2.1 0 0 1-2.1 2.1"/><path d="M3 19.38a2.1 2.1 0 0 1 2.1 2.1 2.1 2.1 0 0 1-2.1 2.1"/><path d="M12 10V6"/><path d="M12 14v4"/><path d="M21 12h-5"/></svg>
-                  ENGAGE_SYNC
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  Запустить
                 </>
               )}
             </button>

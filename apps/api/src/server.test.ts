@@ -117,8 +117,30 @@ describe('API (Hono)', () => {
     it('GET /health returns 200 with { status: ok }', async () => {
       const res = await app.request('/health')
       expect(res.status).toBe(200)
-      const body = (await res.json()) as { status: string; env?: string }
+      const body = (await res.json()) as {
+        status: string
+        service?: string
+        env?: string
+        agentBridgeConfigured?: boolean
+      }
       expect(body.status).toBe('ok')
+      expect(body.service).toBe('leadiya-api')
+      expect(typeof body.agentBridgeConfigured).toBe('boolean')
+    })
+  })
+
+  describe('System routes', () => {
+    it('GET /api/system/capabilities returns integration flags', async () => {
+      const res = await app.request('/api/system/capabilities')
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        agentBridge: { configured: boolean; headerName: string }
+        auth: { bypass: boolean }
+        integrations: Record<string, boolean>
+      }
+      expect(body.agentBridge.headerName).toBe('X-Leadiya-Service-Key')
+      expect(body.auth.bypass).toBe(true)
+      expect(typeof body.agentBridge.configured).toBe('boolean')
     })
   })
 
@@ -181,6 +203,19 @@ describe('API (Hono)', () => {
       expect(body.error).toBe('Invalid action')
     })
 
+    it('POST /api/companies/bulk-action restore returns 200', async () => {
+      ctx.selectQueue.push([])
+      const res = await app.request('/api/companies/bulk-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: ['00000000-0000-0000-0000-000000000001'], action: 'restore' }),
+      })
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { message: string; count: number }
+      expect(body.count).toBe(1)
+      expect(body.message).toContain('Restored')
+    })
+
     it('GET /api/companies/export returns CSV with proper headers', async () => {
       ctx.selectQueue.push([])
       const res = await app.request('/api/companies/export')
@@ -220,7 +255,13 @@ describe('API (Hono)', () => {
       const body = (await res.json()) as { runId: string; message: string }
       expect(body.runId).toBe('11111111-1111-1111-1111-111111111111')
       expect(body.message).toBe('Scraper job started')
-      expect(ctx.run2GisScraper).toHaveBeenCalled()
+      expect(ctx.run2GisScraper).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cities: ['Almaty'],
+          categories: ['Cafe'],
+          scraperRunId: '11111111-1111-1111-1111-111111111111',
+        }),
+      )
     })
 
     it('GET /api/scrapers/runs returns runs array', async () => {
@@ -238,6 +279,37 @@ describe('API (Hono)', () => {
       const body = (await res.json()) as { code: string }
       expect(body.code).toBe('NOT_FOUND')
     })
+
+    it('GET /api/scrapers/runs/:id returns run row with banner stats (detailAttempts, totalSkipped, resultsCount)', async () => {
+      const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+      ctx.selectQueue.push([
+        {
+          id: runId,
+          scraper: '2gis',
+          status: 'running',
+          resultsCount: '4',
+          detailAttempts: 27,
+          totalSkipped: 31,
+          listPagesCompleted: 12,
+          emptyPageStreakMax: 0,
+          error: null,
+          startedAt: new Date('2026-01-01T12:00:00.000Z'),
+          completedAt: null,
+        },
+      ])
+      const res = await app.request(`/api/scrapers/runs/${runId}`)
+      expect(res.status).toBe(200)
+      const data = (await res.json()) as {
+        detailAttempts: number
+        totalSkipped: number
+        resultsCount: string | null
+        status: string
+      }
+      expect(data.status).toBe('running')
+      expect(data.resultsCount).toBe('4')
+      expect(data.detailAttempts).toBe(27)
+      expect(data.totalSkipped).toBe(31)
+    })
   })
 
   describe('Outreach routes', () => {
@@ -249,11 +321,12 @@ describe('API (Hono)', () => {
       expect(data.sequences.some((s) => s.key === 'cold_outreach')).toBe(true)
     })
 
-    it('GET /api/outreach/business includes whatsapp_baileys_send', async () => {
+    it('GET /api/outreach/business includes whatsapp_baileys_send and email_api_send', async () => {
       const res = await app.request('/api/outreach/business')
       expect(res.status).toBe(200)
-      const data = (await res.json()) as { whatsapp_baileys_send?: boolean }
+      const data = (await res.json()) as { whatsapp_baileys_send?: boolean; email_api_send?: boolean }
       expect(typeof data.whatsapp_baileys_send).toBe('boolean')
+      expect(typeof data.email_api_send).toBe('boolean')
     })
 
     it('POST /api/outreach/send returns 503 when Baileys send is disabled', async () => {
@@ -269,6 +342,44 @@ describe('API (Hono)', () => {
       expect(res.status).toBe(503)
       const body = (await res.json()) as { code: string }
       expect(body.code).toBe('WHATSAPP_BAILEYS_DISABLED')
+    })
+
+    it('POST /api/outreach/schedule returns 503 when Baileys send is disabled', async () => {
+      const res = await app.request('/api/outreach/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          leadId: '00000000-0000-0000-0000-000000000001',
+          sequenceKey: 'cold_outreach',
+          stepIndex: 0,
+          delayMs: 3600000,
+        }),
+      })
+      expect(res.status).toBe(503)
+      const body = (await res.json()) as { code: string }
+      expect(body.code).toBe('WHATSAPP_BAILEYS_DISABLED')
+    })
+
+    it('POST /api/outreach/send-email returns 503 when Resend is not configured', async () => {
+      const prev = process.env.RESEND_API_KEY
+      vi.stubEnv('RESEND_API_KEY', '')
+      try {
+        const res = await app.request('/api/outreach/send-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            leadId: '00000000-0000-0000-0000-000000000001',
+            sequenceKey: 'cold_outreach',
+            stepIndex: 2,
+          }),
+        })
+        expect(res.status).toBe(503)
+        const body = (await res.json()) as { code: string }
+        expect(body.code).toBe('EMAIL_API_DISABLED')
+      } finally {
+        if (prev !== undefined) process.env.RESEND_API_KEY = prev
+        else delete process.env.RESEND_API_KEY
+      }
     })
   })
 

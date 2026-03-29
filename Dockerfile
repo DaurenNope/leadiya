@@ -31,8 +31,9 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages ./packages
 COPY --from=build /app/apps/api ./apps/api
 COPY --from=build /app/package.json ./
+COPY --from=build /app/dev-ports.json ./dev-ports.json
 EXPOSE 3001
-CMD ["node", "apps/api/dist/server.js"]
+CMD ["node", "apps/api/dist/main.js"]
 
 # ── Workers ──────────────────────────────────────────────────
 FROM base AS workers
@@ -45,7 +46,8 @@ COPY --from=build /app/apps/workers ./apps/workers
 COPY --from=build /app/package.json ./
 CMD ["node", "apps/workers/dist/main.js"]
 
-# ── Dashboard (static build) ────────────────────────────────
+# ── Dashboard (static + /api reverse proxy) ─────────────────
 FROM nginx:alpine AS dashboard
+COPY apps/dashboard/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/apps/dashboard/dist /usr/share/nginx/html
 EXPOSE 80

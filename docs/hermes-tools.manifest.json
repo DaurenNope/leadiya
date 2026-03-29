@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Leadiya API tools for Hermes (HTTP)",
+  "description": "Configure Hermes HTTP tools pointing at your API base URL. Send header X-Leadiya-Service-Key when LEADIYA_AGENT_SERVICE_KEY is set.",
+  "baseUrlEnv": "LEADIYA_API_BASE_URL",
+  "authHeader": "X-Leadiya-Service-Key",
+  "authEnv": "LEADIYA_AGENT_SERVICE_KEY",
+  "tools": [
+    { "name": "leadiya_health", "method": "GET", "path": "/health" },
+    { "name": "leadiya_companies_list", "method": "GET", "path": "/api/companies", "query": ["q", "limit", "offset", "sortBy", "sortOrder"] },
+    { "name": "leadiya_company_get", "method": "GET", "path": "/api/companies/{id}" },
+    { "name": "leadiya_outreach_sequences", "method": "GET", "path": "/api/outreach/sequences" },
+    { "name": "leadiya_outreach_sequence", "method": "GET", "path": "/api/outreach/sequences/{key}" },
+    { "name": "leadiya_outreach_business", "method": "GET", "path": "/api/outreach/business" },
+    { "name": "leadiya_outreach_preview", "method": "POST", "path": "/api/outreach/preview", "body": ["leadId", "sequenceKey", "stepIndex", "phoneOverride", "emailOverride"] },
+    { "name": "leadiya_outreach_log_write", "method": "POST", "path": "/api/outreach/log", "body": ["leadId", "channel", "direction", "body", "status"] },
+    { "name": "leadiya_outreach_log_read", "method": "GET", "path": "/api/outreach/log", "query": ["leadId", "channel", "limit"] },
+    { "name": "leadiya_outreach_send_wa", "method": "POST", "path": "/api/outreach/send", "body": ["leadId", "sequenceKey", "stepIndex", "body", "phoneOverride"] },
+    { "name": "leadiya_outreach_schedule_wa", "method": "POST", "path": "/api/outreach/schedule", "body": ["leadId", "sequenceKey", "stepIndex", "delayMs", "body", "phoneOverride"] },
+    { "name": "leadiya_outreach_send_email", "method": "POST", "path": "/api/outreach/send-email", "body": ["leadId", "sequenceKey", "stepIndex", "body", "emailOverride"] },
+    { "name": "leadiya_scrapers_2gis", "method": "POST", "path": "/api/scrapers/2gis", "body": ["cities", "categories", "skipProxy"] },
+    { "name": "leadiya_scrapers_runs", "method": "GET", "path": "/api/scrapers/runs", "query": ["limit", "scraper", "nocache"] },
+    { "name": "leadiya_scrapers_run", "method": "GET", "path": "/api/scrapers/runs/{id}" }
+  ]
+}

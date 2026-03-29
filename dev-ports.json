@@ -1,0 +1,6 @@
+{
+  "localCliApiPort": 3041,
+  "viteDevPort": 5173,
+  "dockerComposeApiHostPort": 3001,
+  "dockerComposeDashboardPort": 8080
+}

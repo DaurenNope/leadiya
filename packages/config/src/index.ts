@@ -27,6 +27,11 @@ const schema = z.object({
 
   // Auth
   AUTH_BYPASS: z.string().optional(),
+  /**
+   * Shared secret for agent runtimes (e.g. Nous Hermes) calling `/api/*` without a user JWT.
+   * Send header `X-Leadiya-Service-Key: <value>`. Min length when set — generate a long random string.
+   */
+  LEADIYA_AGENT_SERVICE_KEY: z.string().min(24).optional(),
 
   // Optional integrations
   APP_ENCRYPTION_KEY: z.string().min(32).optional(),
@@ -41,15 +46,24 @@ const schema = z.object({
   R2_SECRET_KEY: z.string().optional(),
   SENTRY_DSN: z.string().url().optional(),
   RESEND_API_KEY: z.string().optional(),
+  /** From: address for Resend (e.g. onboarding@resend.dev or your verified domain). */
+  RESEND_FROM_EMAIL: z.string().email().optional(),
 
   // Scraper tuning
   STAGE2_HTTP_ONLY: z.string().optional(),
   TWOGIS_CHECKPOINT_DIR: z.string().optional(),
+  /** When "1", log every Crawlee navigation URL (list/search requests). Detail pages already log in scrapeCompanyDetail. */
+  TWOGIS_LOG_NAVIGATION: z.string().optional(),
 
   /** When true, workers load the Baileys WhatsApp sender; API exposes POST /api/outreach/send */
   WHATSAPP_BAILEYS_ENABLED: z.string().optional(),
   /** Directory for Baileys multi-file auth state (default: apps/workers/data/baileys-auth) */
   WHATSAPP_BAILEYS_AUTH_DIR: z.string().optional(),
+  /**
+   * When true, Baileys worker appends inbound WhatsApp messages to outreach_log (privacy-sensitive).
+   * Lets the dashboard show replies next to outbound; still not a full chat UI.
+   */
+  WHATSAPP_INBOUND_LOG: z.string().optional(),
 });
 
 export const env = schema.parse(process.env);

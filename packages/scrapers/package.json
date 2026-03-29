@@ -11,7 +11,8 @@
     }
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "build:watch": "tsc --watch --preserveWatchOutput"
   },
   "dependencies": {
     "@crawlee/playwright": "^3.16.0",

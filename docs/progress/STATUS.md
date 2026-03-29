@@ -41,7 +41,7 @@ Monorepo with a **discovery-then-enrichment pipeline**:
 | stat.gov.kz | Degraded (404 as of March 2026) | None |
 | uchet.kz (pk.uchet.kz) | Ready (needs `UCHET_API_TOKEN`) | Token from pk.uchet.kz cabinet |
 | goszakup.gov.kz | Ready (needs `GOSZAKUP_API_TOKEN`) | Bearer token from OWS portal |
-| data.egov.kz | Not yet implemented | apiKey from portal |
+| data.egov.kz | `@leadiya/scrapers`: `fetchEgovLegalEntitiesPage` / `iterateEgovLegalEntities` (no key; optional `EGOV_LEGAL_ENTITIES_DATASET`, `EGOV_LEGAL_ENTITIES_VERSION`) | Public v4 API |
 
 ## Verification
 

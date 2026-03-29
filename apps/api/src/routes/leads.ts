@@ -2,10 +2,11 @@ import { Hono } from 'hono'
 import { createHash, randomUUID } from 'node:crypto'
 import { Queue } from 'bullmq'
 import { z } from 'zod'
-import { db, leads, contacts } from '@leadiya/db'
+import { db, leads, contacts, eq } from '@leadiya/db'
 import { sql } from 'drizzle-orm'
 import { env } from '@leadiya/config'
 import type { AppEnv } from '../server.js'
+import { sanitizeLeadPayload } from '../lib/lead-quality.js'
 
 const enrichmentQueue = new Queue('enrichment', { connection: { url: env.REDIS_URL } })
 
@@ -17,7 +18,7 @@ function deterministicId(name: string, city: string): string {
   return hash.replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5')
 }
 
-async function leadExists(name: string, city: string): Promise<boolean> {
+async function leadExists(name: string, city: string): Promise<string | null> {
   const existing = await db
     .select({ id: leads.id })
     .from(leads)
@@ -25,7 +26,7 @@ async function leadExists(name: string, city: string): Promise<boolean> {
       sql`LOWER(TRIM(${leads.name})) = LOWER(TRIM(${name})) AND LOWER(TRIM(${leads.city})) = LOWER(TRIM(${city}))`
     )
     .limit(1)
-  return existing.length > 0
+  return existing[0]?.id ?? null
 }
 
 const leadSchema = z.object({
@@ -67,10 +68,65 @@ leadsRouter.post('/bulk', async (c) => {
   const newLeadIds: string[] = []
 
   for (const item of result.data.leads) {
-    const normalizedName = item.name.trim()
-    const city = item.city || 'KZ'
+    const cleaned = sanitizeLeadPayload(item)
+    const normalizedName = cleaned.name
+    const city = cleaned.city
 
-    if (await leadExists(normalizedName, city)) {
+    const existingId = await leadExists(normalizedName, city)
+    if (existingId) {
+      // Keep category/source fields fresh for extension recaptures.
+      await db
+        .update(leads)
+        .set({
+          updatedAt: new Date(),
+          city: cleaned.city || null,
+          category: cleaned.category || null,
+          sourceUrl: cleaned.sourceUrl || null,
+          address: cleaned.address || null,
+          website: cleaned.website || null,
+          email: cleaned.emails[0] || null,
+          instagram: cleaned.instagram || null,
+          whatsapp: cleaned.whatsapp || null,
+          telegram: cleaned.telegram || null,
+          facebook: cleaned.facebook || null,
+          rating2gis: cleaned.rating != null ? String(cleaned.rating) : null,
+          lat: cleaned.lat || null,
+          lng: cleaned.lng || null,
+          rawData: {
+            quality: cleaned.quality,
+          },
+        })
+        .where(eq(leads.id, existingId))
+        .catch(() => {})
+
+      if (cleaned.phones.length > 0) {
+        for (const phone of cleaned.phones) {
+          await db
+            .insert(contacts)
+            .values({
+              leadId: existingId,
+              phone,
+              source: '2gis-extension',
+              sourceUrl: cleaned.sourceUrl || null,
+            })
+            .onConflictDoNothing()
+        }
+      }
+
+      if (cleaned.emails.length > 0) {
+        for (const email of cleaned.emails) {
+          await db
+            .insert(contacts)
+            .values({
+              leadId: existingId,
+              email,
+              source: '2gis-extension',
+              sourceUrl: cleaned.sourceUrl || null,
+            })
+            .onConflictDoNothing()
+        }
+      }
+
       skipped++
       continue
     }
@@ -78,7 +134,7 @@ leadsRouter.post('/bulk', async (c) => {
     const leadId = deterministicId(normalizedName, city)
 
     try {
-      const binValue = item.bin && item.bin.length === 12 ? item.bin : null
+      const binValue = cleaned.bin && cleaned.bin.length === 12 ? cleaned.bin : null
 
       await db
         .insert(leads)
@@ -86,54 +142,62 @@ leadsRouter.post('/bulk', async (c) => {
           id: leadId,
           name: normalizedName,
           bin: binValue,
-          city: item.city || null,
-          address: item.address || null,
-          website: item.website || null,
-          category: item.category || null,
+          city: cleaned.city || null,
+          address: cleaned.address || null,
+          website: cleaned.website || null,
+          category: cleaned.category || null,
           source: '2gis-extension',
-          sourceUrl: item.sourceUrl || null,
-          email: item.emails[0] || null,
-          instagram: item.instagram || null,
-          whatsapp: item.whatsapp || null,
-          telegram: item.telegram || null,
-          facebook: item.facebook || null,
-          rating2gis: item.rating != null ? String(item.rating) : null,
-          lat: item.lat || null,
-          lng: item.lng || null,
+          sourceUrl: cleaned.sourceUrl || null,
+          email: cleaned.emails[0] || null,
+          instagram: cleaned.instagram || null,
+          whatsapp: cleaned.whatsapp || null,
+          telegram: cleaned.telegram || null,
+          facebook: cleaned.facebook || null,
+          rating2gis: cleaned.rating != null ? String(cleaned.rating) : null,
+          lat: cleaned.lat || null,
+          lng: cleaned.lng || null,
           discoveryLevel: 1,
           status: 'valid',
+          rawData: {
+            quality: cleaned.quality,
+          },
         })
         .onConflictDoUpdate({
           target: leads.id,
           set: {
             updatedAt: new Date(),
-            address: item.address || null,
-            website: item.website || null,
-            instagram: item.instagram || null,
-            whatsapp: item.whatsapp || null,
-            telegram: item.telegram || null,
-            facebook: item.facebook || null,
-            rating2gis: item.rating != null ? String(item.rating) : null,
-            lat: item.lat || null,
-            lng: item.lng || null,
-            sourceUrl: item.sourceUrl || null,
+            city: cleaned.city || null,
+            category: cleaned.category || null,
+            address: cleaned.address || null,
+            website: cleaned.website || null,
+            instagram: cleaned.instagram || null,
+            whatsapp: cleaned.whatsapp || null,
+            telegram: cleaned.telegram || null,
+            facebook: cleaned.facebook || null,
+            rating2gis: cleaned.rating != null ? String(cleaned.rating) : null,
+            lat: cleaned.lat || null,
+            lng: cleaned.lng || null,
+            sourceUrl: cleaned.sourceUrl || null,
+            rawData: {
+              quality: cleaned.quality,
+            },
           },
         })
 
-      if (item.phones.length > 0) {
-        for (const phone of item.phones) {
+      if (cleaned.phones.length > 0) {
+        for (const phone of cleaned.phones) {
           await db
             .insert(contacts)
-            .values({ leadId, phone, source: '2gis-extension', sourceUrl: item.sourceUrl || null })
+            .values({ leadId, phone, source: '2gis-extension', sourceUrl: cleaned.sourceUrl || null })
             .onConflictDoNothing()
         }
       }
 
-      if (item.emails.length > 0) {
-        for (const email of item.emails) {
+      if (cleaned.emails.length > 0) {
+        for (const email of cleaned.emails) {
           await db
             .insert(contacts)
-            .values({ leadId, email, source: '2gis-extension', sourceUrl: item.sourceUrl || null })
+            .values({ leadId, email, source: '2gis-extension', sourceUrl: cleaned.sourceUrl || null })
             .onConflictDoNothing()
         }
       }
@@ -150,7 +214,8 @@ leadsRouter.post('/bulk', async (c) => {
       'enrich',
       { leadIds: newLeadIds },
       {
-        jobId: `enrich-extension:${randomUUID()}`,
+        // BullMQ jobId cannot contain ':'.
+        jobId: `enrich-extension-${randomUUID()}`,
         removeOnComplete: 200,
         removeOnFail: 500,
       }

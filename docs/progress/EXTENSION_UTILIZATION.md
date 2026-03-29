@@ -12,7 +12,7 @@ The **WXT extension** (`apps/extension/`) is a **parallel discovery path** to th
 
 1. **Extract a single firm** from the active 2GIS tab (firm page) and queue it for sync.
 2. **Bulk scrape** search-result pages: collect `/firm/` links, open each in a background tab, extract, close tab, push to API.
-3. **POST batches** to `POST /api/leads/bulk` on your API (default `http://localhost:3001`), same shape as manual extension payloads.
+3. **POST batches** to `POST /api/leads/bulk` on your API (default `http://localhost:3041` for local dev), same shape as manual extension payloads.
 
 Because extraction runs in a **real Chrome profile**, it can survive UI/captcha situations that headless Playwright hits more often. It does **not** magically bypass all bot checks; it uses **your** session.
 
@@ -27,7 +27,7 @@ Because extraction runs in a **real Chrome profile**, it can survive UI/captcha 
 ## Operator setup
 
 1. Build/load the extension (WXT): `npm run build` or dev mode in `apps/extension` per that package’s README.
-2. In the popup, set **API URL** to your API (e.g. `http://localhost:3001` or deployed host).
+2. In the popup, set **API URL** to your API (e.g. `http://localhost:3041` or deployed host).
 3. Choose **city** + **category** (or paste a **direct 2GIS search URL**).
 4. Use **Scrape current** on a firm page, or **Bulk scrape** on a search page.
 

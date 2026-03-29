@@ -9,7 +9,8 @@ cron.schedule('0 */6 * * *', async () => {
   for (const city of cities) {
     for (const category of categories) {
       await discoveryQueue.add('scrape', { city, category }, {
-        jobId: `discovery:${city}:${category}:${Date.now()}`,
+        // BullMQ jobId cannot contain ':'.
+        jobId: `discovery-${city}-${category}-${Date.now()}`,
         removeOnComplete: 100,
         removeOnFail: 500,
       })

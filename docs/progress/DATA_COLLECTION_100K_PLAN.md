@@ -164,22 +164,24 @@ FROM leads;
 
 ### 4.2 API (local, `AUTH_BYPASS=true`)
 
+Use the API port from repo-root `dev-ports.json` → `localCliApiPort` (default **3041** for `npm run dev:api`). **Docker Compose** publishes the API on host **3001** instead.
+
 **Health** (root path, not under `/api`)
 
 ```bash
-curl -sS http://localhost:3001/health
+curl -sS http://localhost:3041/health
 ```
 
 **List scraper runs**
 
 ```bash
-curl -sS http://localhost:3001/api/scrapers/runs?limit=5 | jq .
+curl -sS http://localhost:3041/api/scrapers/runs?limit=5 | jq .
 ```
 
 **Trigger small 2GIS job** (example body — adjust cities/categories)
 
 ```bash
-curl -sS -X POST http://localhost:3001/api/scrapers/2gis \
+curl -sS -X POST http://localhost:3041/api/scrapers/2gis \
   -H 'Content-Type: application/json' \
   -d '{"cities":["Алматы"],"categories":["IT-компании"],"headless":true,"maxConcurrency":1,"resumeCheckpoint":true}'
 ```
@@ -187,7 +189,7 @@ curl -sS -X POST http://localhost:3001/api/scrapers/2gis \
 **Extension bulk shape** (validation only; empty DB preferred for test IDs)
 
 ```bash
-curl -sS -X POST http://localhost:3001/api/leads/bulk \
+curl -sS -X POST http://localhost:3041/api/leads/bulk \
   -H 'Content-Type: application/json' \
   -d '{"leads":[{"name":"Agent Test Lead","city":"Алматы","phones":[],"emails":[]}]}' | jq .
 ```

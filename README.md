@@ -21,7 +21,7 @@
 [![Redis](https://img.shields.io/badge/Redis-BullMQ-DC382D?logo=redis&logoColor=white)](https://redis.io/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
-[Repository](https://github.com/DaurenNope/leadiya) · [Issues](https://github.com/DaurenNope/leadiya/issues) · [Docs](./docs/)
+[Repository](https://github.com/DaurenNope/leadiya) · [Issues](https://github.com/DaurenNope/leadiya/issues) · [Docs](./docs/) · [Ports / local dev defaults](./docs/PORTS.md)
 
 </div>
 
@@ -32,7 +32,7 @@
 | Layer | What runs | Port / surface |
 |-------|-----------|----------------|
 | **UI** | React + Vite + Tailwind dashboard | `:5173` (dev) |
-| **API** | Hono + Zod + Drizzle | `:3001` (dev) |
+| **API** | Hono + Zod + Drizzle | `:3041` (local `npm run dev:api`); `:3001` when using Docker Compose |
 | **Workers** | BullMQ consumers (discovery, enrichment, optional WhatsApp) | background |
 | **Data** | PostgreSQL + Redis | your infra / Supabase |
 
@@ -203,6 +203,9 @@ cp .env.example .env
 
 npm run build
 npm test
+npm run db:setup
+# ↑ creates tables + 2 sample leads — without this, the dashboard shows an empty table
+
 npm run dev
 ```
 
@@ -216,9 +219,10 @@ npm run dev
 ## Database
 
 ```bash
+npm run db:setup    # migrate + seed (use this first locally)
 npm run db:migrate -w @leadiya/db
 npm run db:generate -w @leadiya/db   # after schema edits
-npm run db:seed -w @leadiya/db       # optional
+npm run db:seed -w @leadiya/db       # optional (also run via db:setup)
 ```
 
 ---
@@ -255,6 +259,9 @@ Copy **[.env.example](./.env.example)** → `.env`.
 
 | Doc | Topic |
 |-----|--------|
+| [docs/HERMES_INTEGRATION.md](./docs/HERMES_INTEGRATION.md) | Hermes как операторский слой + API tools + service key |
+| [docs/DIAGRAM_2GIS_FLOWS.md](./docs/DIAGRAM_2GIS_FLOWS.md) | Mermaid: `run2GisScraper`, dashboard vs extension |
+| [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) | Чеклист продакшена, auth, workers, CORS |
 | [docs/SUPABASE_FREE_TIER.md](./docs/SUPABASE_FREE_TIER.md) | Egress-aware Postgres + auth |
 | [docs/TESTING.md](./docs/TESTING.md) | Vitest |
 | [docs/progress/STATUS.md](./docs/progress/STATUS.md) | Status |
@@ -275,6 +282,9 @@ npm test         # vitest
 
 npx tsx --env-file=.env scripts/evaluate-leads-quality.ts
 npx tsx --env-file=.env scripts/broader-2gis-sample.ts
+
+# Проверка доступа агента (Hermes) к API (нужен LEADIYA_AGENT_SERVICE_KEY в .env и запущенный API)
+npm run verify:agent-api
 ```
 
 ---
@@ -288,6 +298,23 @@ docker build --target api -t leadiya-api .
 docker build --target workers -t leadiya-workers .
 docker build --target dashboard -t leadiya-dashboard .
 ```
+
+**Compose (dashboard + API + `/api` proxy):** the dashboard image includes nginx rules so `/api/*` is forwarded to the API container (fixes **502** when the UI was static-only and had no backend route).
+
+```bash
+docker compose up --build
+# UI http://localhost:8080  ·  API http://localhost:3001/health (Compose) or :3041 for local `npm run dev:api`
+```
+
+Use `host.docker.internal` in `DATABASE_URL` / `REDIS_URL` if the database runs on the host.
+
+### 502 Bad Gateway on `/api/*`
+
+A **502** is from your **edge proxy** (nginx, Cloudflare, hostinger, etc.): it tried to forward `/api` to an upstream that was **down**, **wrong port**, or **missing**. This app does not return 502 from Hono for normal errors (those are 4xx/5xx JSON).
+
+- **Docker dashboard image (before this repo change):** nginx served only static files — `/api` had no upstream → 502. Rebuild the dashboard stage or use `docker compose` from this repo.
+- **Local dev:** run `npm run dev:web` (or `npm run dev`) so Vite (5173) and the API run; Vite proxies `/api` to `LEADIYA_API_ORIGIN` (default **http://localhost:3041**). If the API isn’t running or another app took that port, you’ll see failed fetch / a red banner.
+- **Split domains:** build the dashboard with `VITE_PUBLIC_API_ORIGIN=https://your-api-host` so the browser calls the API directly (CORS is enabled on Hono).
 
 ---
 
