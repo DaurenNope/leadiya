@@ -1,4 +1,5 @@
-import { pgTable, timestamp, uuid, text, boolean, jsonb, integer } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
+import { pgTable, timestamp, uuid, text, boolean, jsonb, integer, uniqueIndex } from 'drizzle-orm/pg-core'
 
 export const timestamps = {
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -97,16 +98,22 @@ export const tenants = pgTable('tenants', {
   ...timestamps,
 })
 
-export const tenantLeads = pgTable('tenant_leads', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  tenantId: uuid('tenant_id').references(() => tenants.id, { onDelete: 'cascade' }).notNull(),
-  leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'cascade' }).notNull(),
-  crmStatus: text('crm_status').notNull().default('new'),
-  notes: text('notes'),
-  tags: jsonb('tags').default([]),
-  claimedAt: timestamp('claimed_at').defaultNow().notNull(),
-  ...timestamps,
-})
+export const tenantLeads = pgTable(
+  'tenant_leads',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').references(() => tenants.id, { onDelete: 'cascade' }).notNull(),
+    leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'cascade' }).notNull(),
+    crmStatus: text('crm_status').notNull().default('new'),
+    notes: text('notes'),
+    tags: jsonb('tags').default([]),
+    claimedAt: timestamp('claimed_at').defaultNow().notNull(),
+    ...timestamps,
+  },
+  (t) => ({
+    tenantLeadUnique: uniqueIndex('tenant_leads_tenant_id_lead_id_key').on(t.tenantId, t.leadId),
+  }),
+)
 
 export const outreachLog = pgTable('outreach_log', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -150,7 +157,7 @@ export const scraperRuns = pgTable('scraper_runs', {
   id: uuid('id').primaryKey().defaultRandom(),
   scraper: text('scraper').notNull(),
   status: text('status').notNull(),
-  resultsCount: text('results_count'),
+  resultsCount: integer('results_count').default(0),
   /** Total firm detail navigation attempts (includes attempts that were skipped due to duplicates or parsing failures). */
   detailAttempts: integer('detail_attempts').default(0).notNull(),
   /** Count of duplicates skipped (both by URL and by normalized name+city session de-dupe). */

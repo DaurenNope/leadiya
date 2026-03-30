@@ -22,7 +22,7 @@ type ScraperRun = {
   id: string
   scraper: string
   status: string
-  resultsCount: string | null
+  resultsCount: number | null
   error: string | null
   startedAt: string | null
   completedAt: string | null

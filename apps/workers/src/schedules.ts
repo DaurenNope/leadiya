@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import cron from 'node-cron'
 import { parse as parseYaml } from 'yaml'
 import { discoveryQueue } from './queues.js'
+import { withCronLock } from './lib/cron-lock.js'
 
 const DEFAULT_DISCOVERY_CITIES = ['Алматы', 'Астана', 'Шымкент', 'Караганда']
 const DEFAULT_DISCOVERY_CATEGORIES = ['Рестораны', 'Кафе', 'Салоны красоты', 'Автосервисы']
@@ -33,19 +34,29 @@ function loadDiscoveryConfig(): { cities: string[]; categories: string[] } {
   }
 }
 
-// Discovery: every 6 hours
+// Discovery: every 6 hours (single replica queues jobs via Redis lock)
 cron.schedule('0 */6 * * *', async () => {
-  const { cities, categories } = loadDiscoveryConfig()
+  await withCronLock('discovery-cron', 300, async () => {
+    const { cities, categories } = loadDiscoveryConfig()
+    const tenantId = process.env.DEFAULT_TENANT_ID?.trim() || undefined
 
-  for (const city of cities) {
-    for (const category of categories) {
-      await discoveryQueue.add('scrape', { city, category }, {
-        // BullMQ jobId cannot contain ':'.
-        jobId: `discovery-${city}-${category}-${Date.now()}`,
-        removeOnComplete: 100,
-        removeOnFail: 500,
-      })
+    for (const city of cities) {
+      for (const category of categories) {
+        try {
+          await discoveryQueue.add(
+            'scrape',
+            { city, category, scraper: '2gis', tenantId },
+            {
+              jobId: `discovery-${city}-${category}-${Date.now()}`,
+              removeOnComplete: 100,
+              removeOnFail: 500,
+            },
+          )
+        } catch (err) {
+          console.error('[schedules] discoveryQueue.add failed:', err)
+        }
+      }
     }
-  }
-  console.log('Discovery jobs queued')
+    console.log('[schedules] Discovery jobs queued')
+  })
 })

@@ -24,10 +24,12 @@ export enum QueueName {
 // ─── Typed Job Data ─────────────────────────────────────────────────────────
 
 export interface DiscoveryJobData {
-    scraper: string; // Used by API
-    scraperName?: string; // Legacy/Compat
-    params?: Record<string, any>;
-    tenantId: string;
+    city: string
+    category: string
+    scraper?: string
+    tenantId?: string
+    scraperName?: string
+    params?: Record<string, unknown>
 }
 
 export interface EnrichmentJobData {

@@ -16,14 +16,20 @@ async function hasActiveRun(): Promise<boolean> {
 const discoveryWorker = new Worker(
   'discovery',
   async (job) => {
-    const { city, category } = job.data as { city: string; category: string }
+    const { city, category, tenantId, scraper } = job.data as {
+      city: string
+      category: string
+      tenantId?: string
+      scraper?: string
+    }
 
     if (await hasActiveRun()) {
       console.log(`[discovery] Skipping ${city} / ${category} — another run is already active`)
       return { skipped: true }
     }
 
-    console.log(`[discovery] ${city} / ${category}`)
+    const scope = [scraper && `scraper=${scraper}`, tenantId && `tenant=${tenantId}`].filter(Boolean).join(' ')
+    console.log(`[discovery] ${city} / ${category}${scope ? ` (${scope})` : ''}`)
 
     const result = await run2GisScraper({
       cities: [city],

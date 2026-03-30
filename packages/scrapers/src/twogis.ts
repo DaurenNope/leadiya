@@ -665,7 +665,7 @@ async function bumpScraperRunSavedCount(runId: string, n = 1): Promise<void> {
   await db
     .update(scraperRuns)
     .set({
-      resultsCount: sql`((COALESCE(NULLIF(trim(${scraperRuns.resultsCount}), ''), '0')::bigint) + ${n})::text`,
+      resultsCount: sql`COALESCE(${scraperRuns.resultsCount}, 0) + ${n}`,
       lastProgressAt: now,
     })
     .where(eq(scraperRuns.id, runId))
@@ -1317,16 +1317,13 @@ export async function run2GisScraper(options?: {
           currentSlice: null,
           ...(allSlicesDead
             ? {
-                resultsCount: '0',
+                resultsCount: 0,
                 error:
                   'Every 2GIS slice failed in Crawlee before any lead was saved (usually navigation timeout, proxy, or 2GIS blocking). Check API logs and try skipProxy locally or fix SMARTPROXY_*.',
               }
             : {
                 error: null,
-                resultsCount: sql`GREATEST(
-                  COALESCE(NULLIF(trim(${scraperRuns.resultsCount}), ''), '0')::bigint,
-                  ${grandTotal}::bigint
-                )::text`,
+                resultsCount: sql`GREATEST(COALESCE(${scraperRuns.resultsCount}, 0), ${grandTotal})`,
               }),
         })
         .where(eq(scraperRuns.id, runId))

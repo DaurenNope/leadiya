@@ -288,7 +288,7 @@ describe('API (Hono)', () => {
           id: runId,
           scraper: '2gis',
           status: 'running',
-          resultsCount: '4',
+          resultsCount: 4,
           detailAttempts: 27,
           totalSkipped: 31,
           listPagesCompleted: 12,
@@ -303,11 +303,11 @@ describe('API (Hono)', () => {
       const data = (await res.json()) as {
         detailAttempts: number
         totalSkipped: number
-        resultsCount: string | null
+        resultsCount: number | null
         status: string
       }
       expect(data.status).toBe('running')
-      expect(data.resultsCount).toBe('4')
+      expect(data.resultsCount).toBe(4)
       expect(data.detailAttempts).toBe(27)
       expect(data.totalSkipped).toBe(31)
     })

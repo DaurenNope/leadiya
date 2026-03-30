@@ -1,37 +1,10 @@
-import { useState, useEffect, useCallback, type KeyboardEvent } from 'react'
+import { useState, useEffect, useCallback, useRef, type KeyboardEvent } from 'react'
 import { useToast } from '../hooks/useToast'
 import { useExtensionStatus } from '../context/ExtensionStatusContext'
 import { apiUrl, authFetch, apiOriginLabel, apiReachabilityUrl } from '../apiBase'
 import type { ScraperRunRow } from './ScraperRunBanner'
 import { WhatsAppConnectPanel } from './WhatsAppConnectPanel'
-
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                           */
-/* ------------------------------------------------------------------ */
-
-function formatWhen(iso: string | null) {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleString('ru-RU', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
-
-function statusStyles(status: string) {
-  const s = status.toLowerCase()
-  if (s === 'running') return 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-  if (s === 'done' || s === 'completed') return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-  if (s === 'error' || s === 'failed') return 'bg-rose-500/15 text-rose-300 border-rose-500/30'
-  return 'bg-slate-500/15 text-slate-400 border-slate-500/30'
-}
-
-function runStatusLabel(status: string) {
-  const s = status.toLowerCase()
-  if (s === 'running') return 'выполняется'
-  if (s === 'done' || s === 'completed') return 'готово'
-  if (s === 'error' || s === 'failed') return 'ошибка'
-  if (s === 'cancelled') return 'остановлен'
-  return status
-}
+import { formatWhen, statusStyles, runStatusLabel } from '../lib/settings-formatters'
 
 /* ------------------------------------------------------------------ */
 /*  Shared UI atoms                                                   */
@@ -211,6 +184,7 @@ export function SettingsView() {
   const { toast } = useToast()
   const extensionStatus = useExtensionStatus()
   const [activeTab, setActiveTab] = useState<TabId>('connections')
+  const loadedTabsRef = useRef<Partial<Record<TabId, boolean>>>({})
 
   /* ---- Connections tab state ---- */
   const [pinging, setPinging] = useState(false)
@@ -384,22 +358,40 @@ export function SettingsView() {
   /* ================================================================ */
 
   useEffect(() => {
-    void loadStats()
-    void loadRuns({ bustCache: true })
-    void loadCapabilities()
-    void loadAutomation()
-    void loadDiscovery()
-    void loadCompany()
-  }, [loadStats, loadRuns, loadCapabilities, loadAutomation, loadDiscovery, loadCompany])
+    if (activeTab === 'data') {
+      void loadStats()
+      void loadRuns({ bustCache: true })
+      return
+    }
+    if (loadedTabsRef.current[activeTab]) return
+    loadedTabsRef.current[activeTab] = true
+    switch (activeTab) {
+      case 'connections':
+        void loadCapabilities()
+        break
+      case 'automation':
+        void loadAutomation()
+        break
+      case 'discovery':
+        void loadDiscovery()
+        break
+      case 'company':
+        void loadCompany()
+        break
+      default:
+        break
+    }
+  }, [activeTab, loadCapabilities, loadAutomation, loadDiscovery, loadCompany, loadStats, loadRuns])
 
   useEffect(() => {
+    if (activeTab !== 'data') return
     const id = window.setInterval(() => {
       if (document.visibilityState !== 'visible') return
       void loadStats()
       void loadRuns()
     }, 12_000)
     return () => window.clearInterval(id)
-  }, [loadStats, loadRuns])
+  }, [activeTab, loadStats, loadRuns])
 
   /* ================================================================ */
   /*  Connection test                                                 */

@@ -148,7 +148,7 @@ export function ScrapersView({ onOpenDiscovery, onWatchRun, onOpenLeadList }: Pr
               <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 text-sm">
                 <span className="text-slate-300 font-mono text-xs">{r.id.slice(0, 8)}…</span>
                 <span className="text-slate-400">
-                  Старт {formatWhen(r.startedAt)} · <span className="text-white font-medium tabular-nums">{r.resultsCount ?? '0'}</span> записей
+                  Старт {formatWhen(r.startedAt)} · <span className="text-white font-medium tabular-nums">{r.resultsCount ?? 0}</span> записей
                 </span>
                 <div className="flex flex-wrap items-center gap-3">
                   <button
@@ -208,7 +208,7 @@ export function ScrapersView({ onOpenDiscovery, onWatchRun, onOpenLeadList }: Pr
                         {runStatusLabelRu(r.status)}
                       </span>
                     </td>
-                    <td className="px-5 py-3 text-slate-200 font-mono tabular-nums">{r.resultsCount ?? '—'}</td>
+                    <td className="px-5 py-3 text-slate-200 font-mono tabular-nums">{r.resultsCount != null ? r.resultsCount : '—'}</td>
                     <td className="px-5 py-3 text-slate-500 text-xs whitespace-nowrap">{formatWhen(r.completedAt)}</td>
                     <td className="px-5 py-3 text-rose-300/90 text-xs max-w-[200px] truncate" title={r.error ?? undefined}>
                       {r.error ?? '—'}

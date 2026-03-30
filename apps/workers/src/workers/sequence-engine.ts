@@ -7,6 +7,8 @@ import { whatsappOutreachQueue, emailOutreachQueue } from '@leadiya/queue'
 import { classifyReply, type ClassifyResult } from '../lib/intent-classifier.js'
 import { generateResponse, extractQualificationFromMessage, type ResponseContext } from '../lib/auto-responder.js'
 import { processReferral } from '../lib/contact-extractor.js'
+import { withCronLock } from '../lib/cron-lock.js'
+import { getOutreachTemplateDefaults } from '../lib/worker-business-config.js'
 
 interface SequenceStep {
   id: string
@@ -48,14 +50,15 @@ function renderTemplate(template: string, vars: Record<string, string>): string 
 }
 
 function buildVars(lead: { name?: string | null; category?: string | null; city?: string | null }): Record<string, string> {
+  const d = getOutreachTemplateDefaults()
   return {
     company: lead.name?.trim() || 'Компания',
-    first_name: process.env.OUTREACH_DEFAULT_FIRST_NAME ?? 'коллега',
+    first_name: d.default_first_name,
     industry: lead.category?.trim() || 'вашей отрасли',
     city: lead.city?.trim() || '',
-    calendar_url: 'https://cal.com/rahmetlabs/30min',
-    signature: '— Команда Rahmet Labs',
-    our_name: 'Rahmet Labs',
+    calendar_url: d.calendar_url,
+    signature: d.signature,
+    our_name: d.our_name,
   }
 }
 
@@ -209,11 +212,13 @@ Lead ID: ${leadId}`
 // ── Sequence Advancement Cron (every 15min) ──────────────────
 
 cron.schedule('*/15 * * * *', async () => {
-  try {
-    await advanceSequences()
-  } catch (err) {
-    console.error('[sequence-engine] Error:', err)
-  }
+  await withCronLock('sequence-advance', 840, async () => {
+    try {
+      await advanceSequences()
+    } catch (err) {
+      console.error('[sequence-engine] Error:', err)
+    }
+  })
 })
 
 async function advanceSequences() {

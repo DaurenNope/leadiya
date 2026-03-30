@@ -6,7 +6,7 @@ export type ScraperRunRow = {
   id: string
   scraper: string
   status: string
-  resultsCount: string | null
+  resultsCount: number | null
   detailAttempts?: number | null
   totalSkipped?: number | null
   listPagesCompleted?: number | null
@@ -151,7 +151,7 @@ export function ScraperRunBanner({ runId, onDismiss, onRunFinished, onOpenLeadLi
   const isCancelled = status === 'cancelled'
   const isError = status === 'error' || status === 'failed'
 
-  const savedCount = Number.parseInt(run?.resultsCount ?? '0', 10) || 0
+  const savedCount = run?.resultsCount ?? 0
   const attemptsCount = run?.detailAttempts ?? 0
   const minsRunning = elapsedMinutes(run?.startedAt ?? null, null)
   const minsFinished = elapsedMinutes(run?.startedAt ?? null, run?.completedAt ?? null)
@@ -164,7 +164,7 @@ export function ScraperRunBanner({ runId, onDismiss, onRunFinished, onOpenLeadLi
     minsFinished != null ? formatPerMinute(savedCount / minsFinished) : '—'
 
   const progressKey = run
-    ? `${run.resultsCount ?? ''}|${run.detailAttempts ?? 0}|${run.totalSkipped ?? 0}|${run.listPagesCompleted ?? 0}|${run.emptyPageStreakMax ?? 0}`
+    ? `${run.resultsCount ?? 0}|${run.detailAttempts ?? 0}|${run.totalSkipped ?? 0}|${run.listPagesCompleted ?? 0}|${run.emptyPageStreakMax ?? 0}`
     : ''
   if (isRunning && progressKey) {
     const prev = countersQuietSince.current
@@ -243,7 +243,7 @@ export function ScraperRunBanner({ runId, onDismiss, onRunFinished, onOpenLeadLi
             <div className="space-y-3">
               <div className="rounded-xl border border-white/[0.07] bg-slate-950/50 px-4 py-3">
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <span className="text-2xl font-semibold tabular-nums text-white">{run?.resultsCount ?? '0'}</span>
+                  <span className="text-2xl font-semibold tabular-nums text-white">{run?.resultsCount ?? 0}</span>
                   <span className="text-sm text-slate-400">новых</span>
                   <span className="text-slate-600 hidden sm:inline">·</span>
                   <span className="text-sm tabular-nums text-slate-300">{formatElapsed(run?.startedAt ?? null)}</span>
@@ -312,7 +312,7 @@ export function ScraperRunBanner({ runId, onDismiss, onRunFinished, onOpenLeadLi
           ) : isDone ? (
             <p>
               Готово. Всего записей за запуск:{' '}
-              <span className="text-emerald-300 font-bold tabular-nums">{run?.resultsCount ?? '0'}</span>
+              <span className="text-emerald-300 font-bold tabular-nums">{run?.resultsCount ?? 0}</span>
               {run?.startedAt && run?.completedAt ? (
                 <span className="text-slate-400 font-normal text-xs">
                   {' '}
@@ -327,7 +327,7 @@ export function ScraperRunBanner({ runId, onDismiss, onRunFinished, onOpenLeadLi
           ) : isCancelled ? (
             <span className="text-slate-300">
               Запуск остановлен из дашборда. Если срез ещё выполнялся, итог может остаться{' '}
-              <span className="tabular-nums text-white">{run?.resultsCount ?? '0'}</span> до завершения работы на сервере.
+              <span className="tabular-nums text-white">{run?.resultsCount ?? 0}</span> до завершения работы на сервере.
             </span>
           ) : isError ? (
             <span className="text-rose-200">{run?.error || 'Неизвестная ошибка'}</span>

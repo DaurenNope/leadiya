@@ -1,22 +1,30 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
+import { ErrorBoundary } from './components/ErrorBoundary.tsx'
 import { ToastProvider } from './components/Toast.tsx'
 import { ExtensionStatusProvider } from './context/ExtensionStatusContext.tsx'
 import { AuthProvider } from './context/AuthContext.tsx'
 import { TenantProvider } from './context/TenantContext.tsx'
 import './index.css'
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+const rootEl = document.getElementById('root')
+if (!rootEl) {
+  throw new Error('Missing #root element')
+}
+
+ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
-    <AuthProvider>
-      <TenantProvider>
-        <ToastProvider>
-          <ExtensionStatusProvider>
-            <App />
-          </ExtensionStatusProvider>
-        </ToastProvider>
-      </TenantProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <TenantProvider>
+          <ToastProvider>
+            <ExtensionStatusProvider>
+              <App />
+            </ExtensionStatusProvider>
+          </ToastProvider>
+        </TenantProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   </React.StrictMode>,
 )

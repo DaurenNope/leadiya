@@ -42,7 +42,7 @@ async function pollRun(runId: string, timeoutMs: number) {
   while (performance.now() - t0 < timeoutMs) {
     const r = await fetch(`${API}/api/scrapers/runs/${runId}`)
     if (!r.ok) throw new Error(`poll HTTP ${r.status}`)
-    const row = (await r.json()) as { status: string; resultsCount: string | null; error: string | null }
+    const row = (await r.json()) as { status: string; resultsCount: number | null; error: string | null }
     const st = row.status.toLowerCase()
     console.log(`  [poll] ${st} resultsCount=${row.resultsCount ?? 'null'}`)
     if (st !== 'running') return row

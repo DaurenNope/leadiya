@@ -82,7 +82,7 @@ scrapersRouter.post('/runs/:id/cancel', async (c) => {
       status: 'cancelled',
       error: 'Stopped from dashboard (POST /api/scrapers/runs/:id/cancel)',
       completedAt: new Date(),
-      resultsCount: run.resultsCount ?? '0',
+      resultsCount: run.resultsCount ?? 0,
     })
     .where(eq(scraperRuns.id, id))
 

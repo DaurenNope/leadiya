@@ -13,11 +13,13 @@ import './workers/enrich-twogis.worker.js'
 import './workers/sequence-engine.js'
 import './workers/email-outreach.worker.js'
 import './workers/report-engine.js'
+import { disconnectCronRedis } from './lib/cron-lock.js'
 
 console.log('Leadiya workers started')
 
 const cleanup = async () => {
   console.log('Shutting down workers...')
+  await disconnectCronRedis()
   process.exit(0)
 }
 

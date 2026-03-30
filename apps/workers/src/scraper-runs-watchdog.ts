@@ -2,15 +2,17 @@ import cron from 'node-cron'
 import { and, eq, lt, sql } from 'drizzle-orm'
 import { env } from '@leadiya/config'
 import { db, scraperRuns } from '@leadiya/db'
+import { withCronLock } from './lib/cron-lock.js'
 
-const staleHours = env.SCRAPER_RUN_STALE_AFTER_HOURS ?? 6
-const noProgressMinutes = env.SCRAPER_RUN_NO_PROGRESS_MINUTES ?? 30
+const staleHours = Number(env.SCRAPER_RUN_STALE_AFTER_HOURS) || 6
+const noProgressMinutes = Number(env.SCRAPER_RUN_NO_PROGRESS_MINUTES) || 30
 
 /**
  * Closes scraper_runs left in `running` (e.g. API crash, OOM, killed process) so the dashboard
  * and single-flight lock recover without manual SQL. See docs/progress/DATA_COLLECTION_100K_PLAN.md §10.
  */
 cron.schedule('*/30 * * * *', async () => {
+  await withCronLock('watchdog-stale-runs', 120, async () => {
   const cutoff = new Date(Date.now() - staleHours * 60 * 60 * 1000)
 
   try {
@@ -32,6 +34,7 @@ cron.schedule('*/30 * * * *', async () => {
   } catch (e) {
     console.error('[scraper-runs-watchdog]', e instanceof Error ? e.message : e)
   }
+  })
 })
 
 /**
@@ -39,6 +42,7 @@ cron.schedule('*/30 * * * *', async () => {
  * (captcha, proxy wedge, navigation hang before timeout).
  */
 cron.schedule('*/5 * * * *', async () => {
+  await withCronLock('watchdog-no-progress', 180, async () => {
   const cutoff = new Date(Date.now() - noProgressMinutes * 60 * 1000)
 
   try {
@@ -65,4 +69,5 @@ cron.schedule('*/5 * * * *', async () => {
   } catch (e) {
     console.error('[scraper-runs-watchdog:no-progress]', e instanceof Error ? e.message : e)
   }
+  })
 })

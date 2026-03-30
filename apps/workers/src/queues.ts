@@ -15,6 +15,11 @@ export const goszakupEnrichQueue = new Queue('enrich-goszakup', { connection })
 export const twogisEnrichQueue = new Queue('enrich-twogis', { connection })
 
 // Job types
-export type DiscoveryJob = { city: string; category: string }
+export type DiscoveryJob = {
+  city: string
+  category: string
+  scraper?: string
+  tenantId?: string
+}
 export type EnrichmentJob = { companyId: string; bin: string }
 export type QualificationJob = { companyId: string }
