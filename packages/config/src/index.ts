@@ -25,6 +25,15 @@ const schema = z.object({
   /** Mark 2GIS API scraper_runs stuck in `running` longer than this as error (workers watchdog). Default 6. */
   SCRAPER_RUN_STALE_AFTER_HOURS: z.coerce.number().int().min(1).max(168).optional(),
 
+  /**
+   * If a run stays `running` but `last_progress_at` (or list-page heartbeats) is older than this many minutes,
+   * the workers watchdog marks it `error` (captcha hang, dead proxy, stuck navigation). Default 30.
+   */
+  SCRAPER_RUN_NO_PROGRESS_MINUTES: z.coerce.number().int().min(3).max(24 * 60).optional(),
+
+  // Dashboard
+  DASHBOARD_URL: z.string().url().optional(),
+
   // Auth
   AUTH_BYPASS: z.string().optional(),
   /**

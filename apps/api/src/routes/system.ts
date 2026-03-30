@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { env } from '@leadiya/config'
-import type { AppEnv } from '../server.js'
+import type { AppEnv } from '../types.js'
 
 const systemRouter = new Hono<AppEnv>()
 

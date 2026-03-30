@@ -67,15 +67,41 @@ automation:
   mode: fully_automatic
   
   # Safety limits for WhatsApp (Baileys)
-  max_outreach_per_day: 30  # Conservative for Baileys
+  max_outreach_per_day: 30
   max_outreach_per_hour: 10
-  delay_between_messages_ms: 45000  # 45 seconds min
+  delay_min_ms: 35000
+  delay_max_ms: 90000
   max_followups_per_lead: 3
   cooldown_after_response: true
+  typing_simulation: true
+
+  business_hours:
+    enabled: true
+    start: 9
+    end: 19
+    timezone: "Asia/Almaty"
+
+  warmup:
+    enabled: true
+    day1_limit: 5
+    ramp_per_day: 3
+    max_daily: 30
 
 discovery:
   schedule: "0 */6 * * *"  # Every 6 hours
-  
+
+  cities:
+    - "Алматы"
+    - "Астана"
+    - "Шымкент"
+    - "Караганда"
+
+  categories:
+    - "Рестораны"
+    - "Кафе"
+    - "Салоны красоты"
+    - "Автосервисы"
+
   sources:
     # Primary: KZ business directories
     - 2gis

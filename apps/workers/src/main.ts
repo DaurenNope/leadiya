@@ -10,6 +10,9 @@ import './workers/enrich-stat.worker.js'
 import './workers/enrich-uchet.worker.js'
 import './workers/enrich-goszakup.worker.js'
 import './workers/enrich-twogis.worker.js'
+import './workers/sequence-engine.js'
+import './workers/email-outreach.worker.js'
+import './workers/report-engine.js'
 
 console.log('Leadiya workers started')
 

@@ -143,6 +143,41 @@ async function leadExists(name: string, city: string): Promise<boolean> {
   return existing.length > 0
 }
 
+/**
+ * Batch version: given an array of {name, city} pairs, returns the set of
+ * `name_lower|city_lower` keys that already exist in the DB.
+ * Single round-trip per batch instead of N individual queries.
+ */
+async function batchLeadExists(
+  pairs: { name: string; city: string }[],
+): Promise<Set<string>> {
+  const out = new Set<string>()
+  if (pairs.length === 0) return out
+  const deduped = new Map<string, { name: string; city: string }>()
+  for (const p of pairs) {
+    const key = `${p.name.toLowerCase().trim()}|${p.city.toLowerCase().trim()}`
+    if (!deduped.has(key)) deduped.set(key, p)
+  }
+  const entries = [...deduped.values()]
+  const CHUNK = 120
+  for (let i = 0; i < entries.length; i += CHUNK) {
+    const chunk = entries.slice(i, i + CHUNK)
+    const conditions = chunk.map(
+      (p) => sql`(LOWER(TRIM(${leads.name})) = LOWER(TRIM(${p.name})) AND LOWER(TRIM(${leads.city})) = LOWER(TRIM(${p.city})))`,
+    )
+    const rows = await db
+      .select({ name: leads.name, city: leads.city })
+      .from(leads)
+      .where(sql.join(conditions, sql` OR `))
+    for (const r of rows) {
+      if (r.name && r.city) {
+        out.add(`${r.name.toLowerCase().trim()}|${r.city.toLowerCase().trim()}`)
+      }
+    }
+  }
+  return out
+}
+
 /** One IN-query per page chunk — avoids one round-trip per firm on duplicate-heavy pages. */
 const SOURCE_URL_LOOKUP_CHUNK = 160
 
@@ -623,12 +658,15 @@ export type TwogisRunLimits = {
   maxFirmDetailAttempts?: number
 }
 
-/** Bump `scraper_runs.results_count` by 1 (atomic); safe when multiple slices run in parallel. */
-async function bumpScraperRunSavedCount(runId: string): Promise<void> {
+/** Bump `scraper_runs.results_count` by N (atomic); safe when multiple slices run in parallel. */
+async function bumpScraperRunSavedCount(runId: string, n = 1): Promise<void> {
+  if (n <= 0) return
+  const now = new Date()
   await db
     .update(scraperRuns)
     .set({
-      resultsCount: sql`((COALESCE(NULLIF(trim(${scraperRuns.resultsCount}), ''), '0')::bigint) + 1)::text`,
+      resultsCount: sql`((COALESCE(NULLIF(trim(${scraperRuns.resultsCount}), ''), '0')::bigint) + ${n})::text`,
+      lastProgressAt: now,
     })
     .where(eq(scraperRuns.id, runId))
 }
@@ -638,6 +676,7 @@ async function bumpScraperRunSliceStats(
   sliceStats: TwogisSliceStats,
 ): Promise<void> {
   const s = normalizeSliceStats(sliceStats)
+  const now = new Date()
   await db
     .update(scraperRuns)
     .set({
@@ -645,8 +684,28 @@ async function bumpScraperRunSliceStats(
       totalSkipped: sql`COALESCE(${scraperRuns.totalSkipped}, 0) + ${s.totalSkipped}`,
       listPagesCompleted: sql`COALESCE(${scraperRuns.listPagesCompleted}, 0) + ${s.listPagesCompleted}`,
       emptyPageStreakMax: sql`GREATEST(COALESCE(${scraperRuns.emptyPageStreakMax}, 0), ${s.emptyPageStreakMax})`,
+      lastProgressAt: now,
     })
     .where(eq(scraperRuns.id, runId))
+}
+
+/** Heartbeat before a potentially long list fetch so watchdog can detect hangs. Returns true if cancelled. */
+async function touchScraperRunProgress(runId: string): Promise<boolean> {
+  try {
+    const [row] = await db
+      .select({ status: scraperRuns.status })
+      .from(scraperRuns)
+      .where(eq(scraperRuns.id, runId))
+      .limit(1)
+    await db.update(scraperRuns).set({ lastProgressAt: new Date() }).where(eq(scraperRuns.id, runId))
+    return (row?.status ?? '').toLowerCase() === 'cancelled'
+  } catch (e) {
+    console.warn(
+      '[2GIS] last_progress touch failed',
+      e instanceof Error ? e.message : e,
+    )
+    return false
+  }
 }
 
 async function scrapeCityCategory(
@@ -746,6 +805,14 @@ async function scrapeCityCategory(
     outer: for (let pageNum = startPage; emptyPages < MAX_EMPTY_PAGES; pageNum++) {
       const url = pageUrl(baseSearchUrl, pageNum)
       console.log(`  📄 Page ${pageNum}: ${url}`)
+      if (scraperRunId) {
+        const cancelled = await touchScraperRunProgress(scraperRunId)
+        if (cancelled) {
+          console.log(`  [cancel] Run cancelled from dashboard — stopping ${city} / ${category}`)
+          stoppedByLimit = true
+          break outer
+        }
+      }
 
       const listPhase = await runSearchListPhase(page, url, _listStrategy, collectFirmLinksOnPage, {
         initialWaitMs: 1800 + Math.floor(Math.random() * 1200),
@@ -775,6 +842,7 @@ async function scrapeCityCategory(
       }
 
       const urlsAlreadyInDb = await loadExistingSourceUrlsSet(firms)
+      let pageSavedCount = 0
 
       for (let fi = firmStart; fi < firms.length; fi++) {
         const link = firms[fi]
@@ -784,8 +852,6 @@ async function scrapeCityCategory(
           totalSkipped++
           pendingStats.totalSkipped++
           await flushPendingRunStats()
-          if (cpPath)
-            saveCheckpoint(cpPath, buildCheckpoint(city, category, _listStrategy, baseSearchUrl, pageNum, fi + 1, totalProcessed, totalSkipped))
           continue
         }
 
@@ -824,8 +890,6 @@ async function scrapeCityCategory(
               }
             }
             await page.waitForTimeout(backoff)
-            if (cpPath)
-              saveCheckpoint(cpPath, buildCheckpoint(city, category, _listStrategy, baseSearchUrl, pageNum, fi + 1, totalProcessed, totalSkipped))
             continue
           }
           details = null
@@ -833,30 +897,18 @@ async function scrapeCityCategory(
         consecutiveCaptchas = 0
 
         if (!details?.name) {
-          if (cpPath)
-            saveCheckpoint(cpPath, buildCheckpoint(city, category, _listStrategy, baseSearchUrl, pageNum, fi + 1, totalProcessed, totalSkipped))
           continue
         }
 
         const normalizedName = details.name.trim()
         const sessionKey = `${normalizedName.toLowerCase()}|${city.toLowerCase()}`
 
-        if (sessionSeen.has(sessionKey)) {
+        if (sessionSeen.has(sessionKey) || leadExistsPositiveCache.has(sessionKey)) {
           totalSkipped++
           pendingStats.totalSkipped++
           await flushPendingRunStats()
-          if (cpPath)
-            saveCheckpoint(cpPath, buildCheckpoint(city, category, _listStrategy, baseSearchUrl, pageNum, fi + 1, totalProcessed, totalSkipped))
-          continue
-        }
-        if (leadExistsPositiveCache.has(sessionKey)) {
-          totalSkipped++
-          pendingStats.totalSkipped++
-          await flushPendingRunStats()
-          console.log(`  ↩ Skipped (exists): ${normalizedName}`)
+          if (!sessionSeen.has(sessionKey)) console.log(`  ↩ Skipped (exists): ${normalizedName}`)
           sessionSeen.add(sessionKey)
-          if (cpPath)
-            saveCheckpoint(cpPath, buildCheckpoint(city, category, _listStrategy, baseSearchUrl, pageNum, fi + 1, totalProcessed, totalSkipped))
           continue
         }
         if (await leadExists(normalizedName, city)) {
@@ -866,8 +918,6 @@ async function scrapeCityCategory(
           await flushPendingRunStats()
           console.log(`  ↩ Skipped (exists): ${normalizedName}`)
           sessionSeen.add(sessionKey)
-          if (cpPath)
-            saveCheckpoint(cpPath, buildCheckpoint(city, category, _listStrategy, baseSearchUrl, pageNum, fi + 1, totalProcessed, totalSkipped))
           continue
         }
         sessionSeen.add(sessionKey)
@@ -939,48 +989,43 @@ async function scrapeCityCategory(
             })
             .returning()
 
+          const contactRows: { leadId: string; phone?: string; email?: string; source: string; sourceUrl: string }[] = []
           if (details.phones?.length) {
             for (const phone of details.phones) {
-              await db
-                .insert(contacts)
-                .values({ leadId: lead.id, phone, source: '2gis', sourceUrl: link })
-                .onConflictDoNothing()
+              contactRows.push({ leadId: lead.id, phone, source: '2gis', sourceUrl: link })
             }
           }
-
           if (details.emails?.length) {
             for (const email of details.emails) {
-              await db
-                .insert(contacts)
-                .values({ leadId: lead.id, email, source: '2gis', sourceUrl: link })
-                .onConflictDoNothing()
+              contactRows.push({ leadId: lead.id, email, source: '2gis', sourceUrl: link })
             }
+          }
+          if (contactRows.length > 0) {
+            await db.insert(contacts).values(contactRows).onConflictDoNothing()
           }
 
           totalProcessed++
+          pageSavedCount++
           newLeadIds.push(lead.id)
           urlsAlreadyInDb.add(linkKey)
           leadExistsPositiveCache.add(sessionKey)
-          if (scraperRunId) {
-            try {
-              await bumpScraperRunSavedCount(scraperRunId)
-            } catch (bumpErr) {
-              console.warn(
-                '[2GIS] scraper_runs.results_count bump failed (banner may lag); lead still saved:',
-                bumpErr instanceof Error ? bumpErr.message : bumpErr
-              )
-            }
-          }
+          sessionSeen.add(sessionKey)
         } catch (dbErr: any) {
           console.error(`  ✗ DB error saving ${normalizedName}: ${dbErr.message}`)
         }
+      }
 
-        if (cpPath) {
-          saveCheckpoint(cpPath, buildCheckpoint(city, category, _listStrategy, baseSearchUrl, pageNum, fi + 1, totalProcessed, totalSkipped))
+      if (scraperRunId && pageSavedCount > 0) {
+        try {
+          await bumpScraperRunSavedCount(scraperRunId, pageSavedCount)
+        } catch (bumpErr) {
+          console.warn(
+            '[2GIS] scraper_runs.results_count bump failed (banner may lag); leads still saved:',
+            bumpErr instanceof Error ? bumpErr.message : bumpErr,
+          )
         }
       }
 
-      // Finished all firms on this page — advance checkpoint to next page, firm 0
       if (cpPath) {
         saveCheckpoint(cpPath, buildCheckpoint(city, category, _listStrategy, baseSearchUrl, pageNum + 1, 0, totalProcessed, totalSkipped))
       }
@@ -1107,28 +1152,33 @@ export async function run2GisScraper(options?: {
   if (options?.limits) console.log(`Run limits: ${JSON.stringify(options.limits)}`)
   console.log('═══════════════════════════════════════════════')
 
-  let runId: string | null = options?.scraperRunId?.trim() || null
-  if (!runId) {
-    try {
-      const [row] = await db
-        .insert(scraperRuns)
-        .values({ scraper: '2gis', status: 'running' })
-        .returning({ id: scraperRuns.id })
-      runId = row.id
-    } catch (err) {
-      console.warn('[2GIS] Could not insert scraper_runs row:', err instanceof Error ? err.message : err)
-    }
-  }
-
-  let grandTotal = 0
-  const allNewLeadIds: string[] = []
-
   const startRequests = buildTwogisStartRequests({
     cities: citiesToScrape,
     categories: categoriesToScrape,
     listStrategy,
     limits: options?.limits,
   })
+  const totalSliceCount = startRequests.length
+
+  let runId: string | null = options?.scraperRunId?.trim() || null
+  if (!runId) {
+    try {
+      const [row] = await db
+        .insert(scraperRuns)
+        .values({ scraper: '2gis', status: 'running', lastProgressAt: new Date(), totalSlices: totalSliceCount })
+        .returning({ id: scraperRuns.id })
+      runId = row.id
+    } catch (err) {
+      console.warn('[2GIS] Could not insert scraper_runs row:', err instanceof Error ? err.message : err)
+    }
+  } else {
+    try {
+      await db.update(scraperRuns).set({ totalSlices: totalSliceCount }).where(eq(scraperRuns.id, runId))
+    } catch {}
+  }
+
+  let grandTotal = 0
+  const allNewLeadIds: string[] = []
 
   const crawleeConfig = new Configuration({ purgeOnStart: true })
 
@@ -1205,12 +1255,32 @@ export async function run2GisScraper(options?: {
             listStrategy: TwogisListStrategy
             limits?: TwogisRunLimits
           }
+
+          if (runId) {
+            const sliceLabel = `${city} / ${category}`
+            await db.update(scraperRuns).set({ currentSlice: sliceLabel, lastProgressAt: new Date() }).where(eq(scraperRuns.id, runId)).catch(() => {})
+          }
+
           const result = await scrapeCityCategory(page, city, category, strategy, sliceCheckpoint, limits, runId)
           grandTotal += result.processed
           allNewLeadIds.push(...result.leadIds)
+
+          if (runId) {
+            await db.update(scraperRuns).set({
+              completedSlices: sql`COALESCE(${scraperRuns.completedSlices}, 0) + 1`,
+              lastProgressAt: new Date(),
+            }).where(eq(scraperRuns.id, runId)).catch(() => {})
+          }
+
           await page.waitForTimeout(400 + Math.random() * 600)
         },
         failedRequestHandler: async ({ request }) => {
+          if (runId) {
+            await db.update(scraperRuns).set({
+              completedSlices: sql`COALESCE(${scraperRuns.completedSlices}, 0) + 1`,
+              lastProgressAt: new Date(),
+            }).where(eq(scraperRuns.id, runId)).catch(() => {})
+          }
           console.error(
             `[2GIS] Crawlee gave up on ${request.url}:`,
             request.errorMessages.join('; ')
@@ -1244,6 +1314,7 @@ export async function run2GisScraper(options?: {
         .set({
           status: allSlicesDead ? 'error' : 'done',
           completedAt: new Date(),
+          currentSlice: null,
           ...(allSlicesDead
             ? {
                 resultsCount: '0',
@@ -1252,7 +1323,6 @@ export async function run2GisScraper(options?: {
               }
             : {
                 error: null,
-                /** Never downgrade an incrementally-updated counter; reconcile with in-memory total. */
                 resultsCount: sql`GREATEST(
                   COALESCE(NULLIF(trim(${scraperRuns.resultsCount}), ''), '0')::bigint,
                   ${grandTotal}::bigint
@@ -1449,21 +1519,19 @@ export async function enrichLeadFromTwogisSearch(
       })
       .where(eq(leads.id, leadId))
 
+    const enrichContactRows: { leadId: string; phone?: string; email?: string; source: string; sourceUrl: string }[] = []
     if (details.phones?.length) {
       for (const phone of details.phones) {
-        await db
-          .insert(contacts)
-          .values({ leadId, phone, source: '2gis_search', sourceUrl: firmUrl })
-          .onConflictDoNothing()
+        enrichContactRows.push({ leadId, phone, source: '2gis_search', sourceUrl: firmUrl })
       }
     }
     if (details.emails?.length) {
       for (const email of details.emails) {
-        await db
-          .insert(contacts)
-          .values({ leadId, email, source: '2gis_search', sourceUrl: firmUrl })
-          .onConflictDoNothing()
+        enrichContactRows.push({ leadId, email, source: '2gis_search', sourceUrl: firmUrl })
       }
+    }
+    if (enrichContactRows.length > 0) {
+      await db.insert(contacts).values(enrichContactRows).onConflictDoNothing()
     }
 
     console.log(`[2GIS enrich] ✓ ${leadId} → ${firmUrl}`)

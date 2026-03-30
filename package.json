@@ -7,6 +7,7 @@
   ],
   "packageManager": "npm@10.8.2",
   "scripts": {
+    "postinstall": "patch-package",
     "build": "turbo run build",
     "dev": "turbo run dev",
     "dev:web": "turbo run dev --filter=@leadiya/api --filter=dashboard",
@@ -25,10 +26,14 @@
     "verify:agent-api": "node scripts/verify-agent-api.mjs",
     "verify:agent-outreach": "node scripts/verify-agent-api.mjs",
     "setup:agent-bridge": "node scripts/setup-agent-bridge.mjs",
-    "backfill:twogis-card-category": "npx tsx --env-file=.env scripts/backfill-twogis-card-category.ts"
+    "backfill:twogis-card-category": "npx tsx --env-file=.env scripts/backfill-twogis-card-category.ts",
+    "outreach": "npx tsx scripts/run-outreach.ts",
+    "outreach:dry": "npx tsx scripts/run-outreach.ts --limit 5",
+    "outreach:send": "npx tsx scripts/run-outreach.ts --send --limit 5"
   },
   "devDependencies": {
     "esbuild": "^0.27.4",
+    "patch-package": "^8.0.1",
     "turbo": "^2.1.0",
     "vitest": "^4.1.0"
   },

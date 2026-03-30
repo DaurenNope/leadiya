@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { apiUrl } from '../apiBase'
+import { apiUrl, authFetch } from '../apiBase'
 import { useToast } from '../hooks/useToast'
 
 export type ScraperRunRow = {
@@ -11,6 +11,11 @@ export type ScraperRunRow = {
   totalSkipped?: number | null
   listPagesCompleted?: number | null
   emptyPageStreakMax?: number | null
+  currentSlice?: string | null
+  totalSlices?: number | null
+  completedSlices?: number | null
+  /** Server heartbeat: list page start, stat bumps, new lead saved (ISO). */
+  lastProgressAt?: string | null
   error: string | null
   startedAt: string | null
   completedAt: string | null
@@ -55,6 +60,23 @@ function formatPerMinute(rate: number): string {
   return String(Math.round(rate))
 }
 
+/** Minutes since ISO timestamp, or null if invalid. */
+function minutesSince(iso: string | null | undefined): number | null {
+  if (!iso) return null
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return null
+  return Math.max(0, (Date.now() - t) / 60_000)
+}
+
+function formatMinutesAgo(mins: number | null): string {
+  if (mins == null || !Number.isFinite(mins)) return '—'
+  if (mins < 1) return '<1 мин'
+  if (mins < 60) return `${Math.floor(mins)} мин`
+  const h = Math.floor(mins / 60)
+  const m = Math.floor(mins % 60)
+  return `${h} ч ${m} мин`
+}
+
 type Props = {
   runId: string
   onDismiss: () => void
@@ -70,10 +92,12 @@ export function ScraperRunBanner({ runId, onDismiss, onRunFinished, onOpenLeadLi
   const [stopBusy, setStopBusy] = useState(false)
   const [rateTick, setRateTick] = useState(0)
   const finishedNotified = useRef(false)
+  /** When live counters last changed — detects "stuck" without server last_progress_at (pre-migration). */
+  const countersQuietSince = useRef<{ key: string; at: number } | null>(null)
 
   const poll = useCallback(async () => {
     try {
-      const res = await fetch(apiUrl(`/api/scrapers/runs/${runId}`))
+      const res = await authFetch(apiUrl(`/api/scrapers/runs/${runId}`))
       if (!res.ok) {
         setFetchError(pollErrorMessage(res.status))
         return
@@ -92,6 +116,7 @@ export function ScraperRunBanner({ runId, onDismiss, onRunFinished, onOpenLeadLi
 
   useEffect(() => {
     finishedNotified.current = false
+    countersQuietSince.current = null
   }, [runId])
 
   useEffect(() => {
@@ -138,10 +163,29 @@ export function ScraperRunBanner({ runId, onDismiss, onRunFinished, onOpenLeadLi
   const savedPerMinDone =
     minsFinished != null ? formatPerMinute(savedCount / minsFinished) : '—'
 
+  const progressKey = run
+    ? `${run.resultsCount ?? ''}|${run.detailAttempts ?? 0}|${run.totalSkipped ?? 0}|${run.listPagesCompleted ?? 0}|${run.emptyPageStreakMax ?? 0}`
+    : ''
+  if (isRunning && progressKey) {
+    const prev = countersQuietSince.current
+    if (!prev || prev.key !== progressKey) {
+      countersQuietSince.current = { key: progressKey, at: Date.now() }
+    }
+  }
+  const quietMinutes =
+    isRunning && countersQuietSince.current
+      ? (Date.now() - countersQuietSince.current.at) / 60_000
+      : 0
+  const serverProgressMin = minutesSince(run?.lastProgressAt ?? null)
+  const showStaleHint =
+    isRunning &&
+    quietMinutes >= 6 &&
+    (serverProgressMin == null || serverProgressMin >= 6)
+
   const stopRun = async () => {
     setStopBusy(true)
     try {
-      const res = await fetch(apiUrl(`/api/scrapers/runs/${runId}/cancel`), { method: 'POST' })
+      const res = await authFetch(apiUrl(`/api/scrapers/runs/${runId}/cancel`), { method: 'POST' })
       const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string }
       if (res.status === 409) {
         toast(data.error || 'Запуск уже не в состоянии running', 'info')
@@ -210,6 +254,39 @@ export function ScraperRunBanner({ runId, onDismiss, onRunFinished, onOpenLeadLi
                   <span className="tabular-nums">{savedPerMinRunning}</span> нов/мин ·{' '}
                   <span className="tabular-nums">{attemptsPerMinRunning}</span> карт/мин
                 </p>
+                {(run?.currentSlice || run?.totalSlices) ? (
+                  <p className="text-[12px] text-slate-500 mt-1.5 leading-snug">
+                    Сейчас:{' '}
+                    <span className="text-amber-300/80">
+                      {run.currentSlice ?? '…'}
+                    </span>
+                    {run.totalSlices ? (
+                      <span className="text-slate-500">
+                        {' '}(<span className="text-slate-300 tabular-nums">{(run.completedSlices ?? 0) + 1}</span>
+                        {' '}из <span className="text-slate-300 tabular-nums">{run.totalSlices}</span>)
+                      </span>
+                    ) : null}
+                  </p>
+                ) : null}
+                <p className="text-[11px] text-slate-500 mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span>
+                    Прогресс (сервер):{' '}
+                    <span className="text-slate-300 tabular-nums">
+                      {run?.lastProgressAt ? formatMinutesAgo(serverProgressMin) + ' назад' : 'нет метки — выполните db:migrate'}
+                    </span>
+                  </span>
+                </p>
+                {showStaleHint ? (
+                  <div
+                    className="rounded-lg border border-amber-500/35 bg-amber-950/30 px-3 py-2 text-[12px] text-amber-100/95 leading-snug"
+                    role="status"
+                  >
+                    <strong className="text-amber-200">Похоже на зависание:</strong> счётчики и метка прогресса не обновлялись{' '}
+                    {Math.floor(Math.max(quietMinutes, serverProgressMin ?? 0))}+ мин. Проверьте лог процесса API (2GIS), прокси и капчу. Воркеры
+                    помечают такой запуск ошибкой через <code className="text-amber-200/90">SCRAPER_RUN_NO_PROGRESS_MINUTES</code> (по умолчанию 30
+                    мин) или остановите вручную.
+                  </div>
+                ) : null}
               </div>
               <details className="text-[11px] text-slate-500">
                 <summary className="cursor-pointer text-slate-500 hover:text-slate-400">
@@ -221,8 +298,13 @@ export function ScraperRunBanner({ runId, onDismiss, onRunFinished, onOpenLeadLi
                     вставки в БД; дубликаты по URL не увеличивают этот счётчик.
                   </p>
                   <p>
-                    Поиск 2GIS идёт по страницам; срез заканчивается после нескольких пустых страниц подряд. Долгое плато: капча, прокси, таймаут —
-                    смотрите лог API. <code className="text-slate-400">results_count bump failed</code> — редкий сбой счётчика, лид мог сохраниться.
+                    Поиск 2GIS идёт по страницам; срез заканчивается после нескольких пустых страниц подряд. Долгое плато без движения карточек/дублей
+                    часто значит <strong className="text-slate-400">зависший запрос</strong> (капча, прокси, блокировка) — смотрите лог API. Поле{' '}
+                    <code className="text-slate-400">last_progress_at</code> обновляется на каждой странице списка и при сохранении — если оно старше
+                    порога, фоновый watchdog в <strong className="text-slate-400">workers</strong> закроет запуск.
+                  </p>
+                  <p>
+                    <code className="text-slate-400">results_count bump failed</code> — редкий сбой счётчика; лид мог сохраниться.
                   </p>
                 </div>
               </details>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { apiUrl } from '../apiBase'
+import { apiUrl, authFetch } from '../apiBase'
 import { useToast } from '../hooks/useToast'
 import type { ScraperRunRow } from './ScraperRunBanner'
 
@@ -43,7 +43,7 @@ export function ScrapersView({ onOpenDiscovery, onWatchRun, onOpenLeadList }: Pr
   const cancelRun = async (id: string) => {
     setStopId(id)
     try {
-      const res = await fetch(apiUrl(`/api/scrapers/runs/${id}/cancel`), { method: 'POST' })
+      const res = await authFetch(apiUrl(`/api/scrapers/runs/${id}/cancel`), { method: 'POST' })
       const data = (await res.json().catch(() => ({}))) as { error?: string }
       if (res.status === 409) {
         toast(data.error || 'Запуск не выполняется', 'info')
@@ -64,7 +64,7 @@ export function ScrapersView({ onOpenDiscovery, onWatchRun, onOpenLeadList }: Pr
     try {
       const q = new URLSearchParams({ limit: '40', scraper: '2gis' })
       if (opts?.bustCache) q.set('nocache', '1')
-      const res = await fetch(apiUrl(`/api/scrapers/runs?${q.toString()}`))
+      const res = await authFetch(apiUrl(`/api/scrapers/runs?${q.toString()}`))
       if (!res.ok) {
         setError(`HTTP ${res.status}`)
         return

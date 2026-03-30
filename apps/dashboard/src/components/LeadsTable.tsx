@@ -9,7 +9,7 @@ import {
 import type { Lead } from '../types';
 import { useToast } from '../hooks/useToast'
 import { useExtensionStatus } from '../context/ExtensionStatusContext'
-import { apiUrl } from '../apiBase'
+import { apiUrl, authFetch } from '../apiBase'
 import { leadStatusLabel } from '../lib/lead-ui'
 
 /** Vite `define` in development — see vite.config.ts */
@@ -181,6 +181,7 @@ export function LeadsTable({
 
   // Selection state for bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [claimingCrm, setClaimingCrm] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   /** Ignore stale JSON when filters/page change faster than the network. */
@@ -263,7 +264,7 @@ export function LeadsTable({
       if (needFiltersMetaRef.current) params.set('includeFiltersMeta', '1');
 
       const listPath = `/api/companies?${params.toString()}`
-      const res = await fetch(apiUrl(listPath))
+      const res = await authFetch(apiUrl(listPath))
       if (myGen !== fetchGenerationRef.current) return
 
       if (!res.ok) {
@@ -403,7 +404,7 @@ export function LeadsTable({
   const paginatedLeads = leads;
 
   const postBulkAction = async (body: Record<string, unknown>) => {
-    const res = await fetch(apiUrl('/api/companies/bulk-action'), {
+    const res = await authFetch(apiUrl('/api/companies/bulk-action'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -415,11 +416,60 @@ export function LeadsTable({
     return data.message ?? 'Готово'
   }
 
+  function formatLeadsClaimedRu(n: number): string {
+    const mod100 = n % 100
+    const mod10 = n % 10
+    if (mod100 >= 11 && mod100 <= 14) return `${n} лидов добавлено в CRM`
+    if (mod10 === 1) return `${n} лид добавлен в CRM`
+    if (mod10 >= 2 && mod10 <= 4) return `${n} лида добавлено в CRM`
+    return `${n} лидов добавлено в CRM`
+  }
+
+  const handleClaimToCrm = async () => {
+    const leadIds = [...selectedIds]
+    const total = leadIds.length
+    if (total === 0) return
+    setClaimingCrm(true)
+    try {
+      const res = await authFetch(apiUrl('/api/crm/leads/claim'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadIds }),
+      })
+      const data = (await res.json().catch(() => ({}))) as {
+        claimed?: number
+        alreadyClaimed?: number
+        error?: string
+      }
+      if (!res.ok) {
+        throw new Error(data.error || `Запрос не выполнен (${res.status})`)
+      }
+      const claimed = data.claimed ?? 0
+      const alreadyClaimed = data.alreadyClaimed ?? 0
+      if (alreadyClaimed === total) {
+        toast('Все выбранные уже в CRM', 'info')
+      } else if (claimed > 0) {
+        const base = formatLeadsClaimedRu(claimed)
+        toast(
+          alreadyClaimed > 0 ? `${base} (${alreadyClaimed} уже в CRM)` : base,
+          'success',
+        )
+      } else {
+        toast('Не удалось добавить лиды в CRM', 'error')
+      }
+      setSelectedIds(new Set())
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Не удалось добавить в CRM', 'error')
+    } finally {
+      setClaimingCrm(false)
+    }
+  }
+
   const handleEnrich = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     setEnrichingId(id);
     try {
-      const res = await fetch(apiUrl(`/api/companies/${id}/enrich`), { method: 'POST' });
+      const res = await authFetch(apiUrl(`/api/companies/${id}/enrich`), { method: 'POST' });
       if (!res.ok) throw new Error();
       toast('Обогащение поставлено в очередь', 'success');
       setTimeout(() => fetchLeads(), 2000);
@@ -570,6 +620,14 @@ export function LeadsTable({
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <button
+                type="button"
+                disabled={claimingCrm}
+                className="px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all bg-gradient-to-r from-sky-500 to-cyan-500 hover:from-sky-400 hover:to-cyan-400 text-[#020617] shadow-lg shadow-sky-500/25 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
+                onClick={() => void handleClaimToCrm()}
+              >
+                {claimingCrm ? 'Добавление…' : 'В мою CRM'}
+              </button>
+              <button
                 className="px-5 py-2 bg-white/10 hover:bg-white/20 rounded-xl text-[10px] font-black text-white uppercase tracking-widest transition-all"
                 onClick={async () => {
                   const n = selectedIds.size
@@ -637,7 +695,7 @@ export function LeadsTable({
               >Удалить</button>
               <button
                 className="px-5 py-2 bg-white text-sky-900 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95"
-                onClick={() => {
+                onClick={async () => {
                   const params = new URLSearchParams()
                   if (searchInput.trim()) params.append('q', searchInput.trim())
                   if (filterCity !== 'all') params.append('city', filterCity)
@@ -648,11 +706,15 @@ export function LeadsTable({
                   else if (filterIcp === 'medium') { params.append('icpMin', '40'); params.append('icpMax', '79'); }
                   else if (filterIcp === 'low') { params.append('icpMax', '39'); }
                   const url = apiUrl(`/api/companies/export?${params.toString()}`)
+                  const res = await authFetch(url)
+                  if (!res.ok) { toast('Ошибка экспорта', 'error'); return }
+                  const blob = await res.blob()
+                  const blobUrl = URL.createObjectURL(blob)
                   const a = document.createElement('a')
-                  a.href = url
+                  a.href = blobUrl
                   a.download = 'leads.csv'
                   a.click()
-                  toast('Загрузка CSV начата', 'success')
+                  URL.revokeObjectURL(blobUrl)
                 }}
               >Экспорт CSV</button>
             </div>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { Lead } from '../types'
-import { apiUrl } from '../apiBase'
+import { apiUrl, authFetch } from '../apiBase'
 import { leadStatusLabel } from '../lib/lead-ui'
 import { primaryEmail } from '../lib/lead-contact'
 import { OutreachCrmForm } from './OutreachCrmForm'
@@ -287,15 +287,21 @@ export function LeadSidePanel({ lead: initialLead, onClose }: Props) {
   useEffect(() => {
     if (!initialLead) return
     let cancelled = false
-    fetch(apiUrl(`/api/companies/${initialLead.id}`))
-      .then(res => res.json())
-      .then(data => { if (!cancelled) setLead(data) })
+    authFetch(apiUrl(`/api/companies/${initialLead.id}`))
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.json()
+      })
+      .then((data) => {
+        if (!cancelled) setLead(data as Lead)
+      })
       .catch(() => {})
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [initialLead])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- open CRM when lead changes
     setCrmOpen(true)
   }, [initialLead?.id])
 
@@ -386,6 +392,13 @@ export function LeadSidePanel({ lead: initialLead, onClose }: Props) {
               </div>
             </div>
 
+            {loading ? (
+              <div className="min-h-0 flex-1 space-y-4 animate-pulse">
+                <div className="h-4 bg-slate-800 rounded-lg w-3/4" />
+                <div className="h-4 bg-slate-800 rounded-lg w-1/2" />
+                <div className="h-32 bg-slate-800/50 rounded-2xl" />
+              </div>
+            ) : (
             <div className="min-h-0 flex-1 space-y-8 overflow-y-auto pb-4 pr-1">
               <CompanySnapshot lead={displayLead} />
 
@@ -468,12 +481,7 @@ export function LeadSidePanel({ lead: initialLead, onClose }: Props) {
                 <div>
                   <h3 className="workspace-label">Все контакты</h3>
                   <div className="space-y-3">
-                    {loading ? (
-                      <div className="p-8 border border-white/5 border-dashed rounded-[2rem] animate-pulse text-center">
-                        <span className="text-[9px] font-black text-slate-600 uppercase tracking-[0.2em]">Загрузка контактов…</span>
-                      </div>
-                    ) : (
-                      <>
+                    <>
                         {(displayLead.whatsapp || displayLead.telegram || displayLead.instagram) && (
                           <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-5 space-y-3">
                             <div className="flex items-center justify-between gap-2">
@@ -549,8 +557,7 @@ export function LeadSidePanel({ lead: initialLead, onClose }: Props) {
                             )}
                           </div>
                         )})}
-                      </>
-                    )}
+                    </>
                   </div>
                 </div>
               </div>
@@ -570,6 +577,7 @@ export function LeadSidePanel({ lead: initialLead, onClose }: Props) {
                 </div>
               )}
             </div>
+            )}
 
             <div className="mt-auto flex shrink-0 gap-4 border-t border-white/5 pt-10">
               <button

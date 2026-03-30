@@ -43,6 +43,7 @@ export function ExtensionStatusProvider({ children }: { children: ReactNode }) {
   return <ExtensionStatusContext.Provider value={status}>{children}</ExtensionStatusContext.Provider>
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- hook paired with provider
 export function useExtensionStatus() {
   return useContext(ExtensionStatusContext)
 }

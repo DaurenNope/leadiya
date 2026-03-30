@@ -53,6 +53,7 @@ export const companies = leads; // Alias for backward compatibility
 export const contacts = pgTable('contacts', {
   id: uuid('id').primaryKey().defaultRandom(),
   leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'cascade' }),
+  tenantId: uuid('tenant_id').references(() => tenants.id),
   fullName: text('full_name'),
   role: text('role'),
   phone: text('phone').unique(),
@@ -96,6 +97,17 @@ export const tenants = pgTable('tenants', {
   ...timestamps,
 })
 
+export const tenantLeads = pgTable('tenant_leads', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').references(() => tenants.id, { onDelete: 'cascade' }).notNull(),
+  leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'cascade' }).notNull(),
+  crmStatus: text('crm_status').notNull().default('new'),
+  notes: text('notes'),
+  tags: jsonb('tags').default([]),
+  claimedAt: timestamp('claimed_at').defaultNow().notNull(),
+  ...timestamps,
+})
+
 export const outreachLog = pgTable('outreach_log', {
   id: uuid('id').primaryKey().defaultRandom(),
   tenantId: uuid('tenant_id').references(() => tenants.id),
@@ -112,6 +124,28 @@ export const outreachLog = pgTable('outreach_log', {
   ...timestamps,
 })
 
+export const leadSequenceState = pgTable('lead_sequence_state', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').references(() => tenants.id),
+  leadId: uuid('lead_id').references(() => leads.id, { onDelete: 'cascade' }).notNull(),
+  contactId: uuid('contact_id').references(() => contacts.id),
+  sequenceKey: text('sequence_key').notNull(),
+  currentStep: integer('current_step').default(0).notNull(),
+  /** active | paused | completed | cold | referred */
+  status: text('status').default('active').notNull(),
+  /** unknown | positive | negative | question | referral | meeting | pricing | timeline */
+  intent: text('intent').default('unknown').notNull(),
+  startedAt: timestamp('started_at').defaultNow().notNull(),
+  lastOutreachAt: timestamp('last_outreach_at'),
+  nextStepAt: timestamp('next_step_at'),
+  lastReplyAt: timestamp('last_reply_at'),
+  referredToLeadId: uuid('referred_to_lead_id').references(() => leads.id),
+  messageCount: integer('message_count').default(0).notNull(),
+  /** Structured data extracted during qualification (JSON: service, budget, timeline, requirements, etc.) */
+  qualificationData: jsonb('qualification_data'),
+  ...timestamps,
+})
+
 export const scraperRuns = pgTable('scraper_runs', {
   id: uuid('id').primaryKey().defaultRandom(),
   scraper: text('scraper').notNull(),
@@ -125,6 +159,14 @@ export const scraperRuns = pgTable('scraper_runs', {
   listPagesCompleted: integer('list_pages_completed').default(0).notNull(),
   /** Max consecutive pages with 0 firms (used to detect empty slice / blockage). */
   emptyPageStreakMax: integer('empty_page_streak_max').default(0).notNull(),
+  /** Human-readable label for the currently-active city×category slice, e.g. "Алматы / Рестораны (3/60)". */
+  currentSlice: text('current_slice'),
+  /** Total number of city×category slices in the run. */
+  totalSlices: integer('total_slices'),
+  /** Number of slices that have completed (successfully or by error). */
+  completedSlices: integer('completed_slices').default(0).notNull(),
+  /** Updated on list-page start, stat bumps, and each saved lead — used to detect stuck runs. */
+  lastProgressAt: timestamp('last_progress_at'),
   error: text('error'),
   startedAt: timestamp('started_at').defaultNow(),
   completedAt: timestamp('completed_at'),

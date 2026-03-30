@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useToast } from '../hooks/useToast'
-import { apiUrl } from '../apiBase'
+import { apiUrl, authFetch } from '../apiBase'
 import { phoneDigitsForWa, waMeLink } from '../lib/wa-link'
 import { buildMailtoUrl, splitEmailTemplate } from '../lib/mailto'
 import { formatSequenceDelay } from '../lib/sequence-ui'
@@ -67,14 +67,14 @@ export function OutreachCrmForm({
   const [scheduleDelayMs, setScheduleDelayMs] = useState(3_600_000)
 
   const refreshOutreachLogs = useCallback((id: string) => {
-    fetch(apiUrl(`/api/outreach/log?leadId=${encodeURIComponent(id)}&limit=120`))
+    authFetch(apiUrl(`/api/outreach/log?leadId=${encodeURIComponent(id)}&limit=120`))
       .then((r) => (r.ok ? r.json() : { items: [] }))
       .then((d: { items?: OutreachLogRow[] }) => setOutreachLogs(d.items ?? []))
       .catch(() => setOutreachLogs([]))
   }, [])
 
   useEffect(() => {
-    fetch(apiUrl('/api/outreach/sequences'))
+    authFetch(apiUrl('/api/outreach/sequences'))
       .then((r) => (r.ok ? r.json() : { sequences: [] }))
       .then((d: { sequences?: { key: string }[] }) => {
         const keys = (d.sequences ?? []).map((s) => s.key)
@@ -84,7 +84,7 @@ export function OutreachCrmForm({
   }, [])
 
   useEffect(() => {
-    fetch(apiUrl('/api/outreach/business'))
+    authFetch(apiUrl('/api/outreach/business'))
       .then((r) => (r.ok ? r.json() : {}))
       .then((d: { whatsapp_baileys_send?: boolean; email_api_send?: boolean }) => {
         setBaileysSend(!!d.whatsapp_baileys_send)
@@ -97,7 +97,7 @@ export function OutreachCrmForm({
   }, [])
 
   useEffect(() => {
-    fetch(apiUrl(`/api/outreach/sequences/${encodeURIComponent(sequenceKey)}`))
+    authFetch(apiUrl(`/api/outreach/sequences/${encodeURIComponent(sequenceKey)}`))
       .then((r) => (r.ok ? r.json() : null))
       .then((seq: { steps?: { id?: string; channel: string; delay?: unknown }[] } | null) => {
         const steps = seq?.steps ?? []
@@ -315,7 +315,7 @@ export function OutreachCrmForm({
               setOutreachBusy(true)
               try {
                 const override = phoneInput.trim() ? phoneInput.trim() : undefined
-                const res = await fetch(apiUrl('/api/outreach/preview'), {
+                const res = await authFetch(apiUrl('/api/outreach/preview'), {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
@@ -384,7 +384,7 @@ export function OutreachCrmForm({
                 onClick={async () => {
                   setOutreachBusy(true)
                   try {
-                    const res = await fetch(apiUrl('/api/outreach/send'), {
+                    const res = await authFetch(apiUrl('/api/outreach/send'), {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
@@ -415,7 +415,7 @@ export function OutreachCrmForm({
               disabled={!draftBody.trim()}
               onClick={async () => {
                 try {
-                  const res = await fetch(apiUrl('/api/outreach/log'), {
+                  const res = await authFetch(apiUrl('/api/outreach/log'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -459,7 +459,7 @@ export function OutreachCrmForm({
                   onClick={async () => {
                     setOutreachBusy(true)
                     try {
-                      const res = await fetch(apiUrl('/api/outreach/schedule'), {
+                      const res = await authFetch(apiUrl('/api/outreach/schedule'), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -522,7 +522,7 @@ export function OutreachCrmForm({
                 onClick={async () => {
                   setOutreachBusy(true)
                   try {
-                    const res = await fetch(apiUrl('/api/outreach/preview'), {
+                    const res = await authFetch(apiUrl('/api/outreach/preview'), {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
@@ -585,7 +585,7 @@ export function OutreachCrmForm({
                     onClick={async () => {
                       setOutreachBusy(true)
                       try {
-                        const res = await fetch(apiUrl('/api/outreach/send-email'), {
+                        const res = await authFetch(apiUrl('/api/outreach/send-email'), {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({
@@ -616,7 +616,7 @@ export function OutreachCrmForm({
                   disabled={!emailDraft.trim()}
                   onClick={async () => {
                     try {
-                      const res = await fetch(apiUrl('/api/outreach/log'), {
+                      const res = await authFetch(apiUrl('/api/outreach/log'), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({

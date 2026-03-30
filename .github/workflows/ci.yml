@@ -14,6 +14,40 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
+    env:
+      NODE_ENV: test
+      AUTH_BYPASS: "true"
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/leadiya_test
+      DATABASE_DIRECT_URL: postgresql://postgres:postgres@localhost:5432/leadiya_test
+      REDIS_URL: redis://127.0.0.1:6379
+      STRIPE_SECRET_KEY: sk_test_ci_placeholder
+      DEFAULT_TENANT_ID: ""
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: leadiya_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -22,7 +56,16 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      - name: Cache Turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}-
+            turbo-${{ runner.os }}-
+
+      - run: npm ci --legacy-peer-deps
 
       - name: Build all packages
         run: npm run build

@@ -15,10 +15,16 @@ COPY packages/scrapers/package.json packages/scrapers/
 COPY apps/api/package.json apps/api/
 COPY apps/workers/package.json apps/workers/
 COPY apps/dashboard/package.json apps/dashboard/
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 
 # ── Build ────────────────────────────────────────────────────
 FROM base AS build
+ARG VITE_SUPABASE_URL=""
+ARG VITE_SUPABASE_ANON_KEY=""
+ARG VITE_PUBLIC_API_ORIGIN=""
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
+ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
+ENV VITE_PUBLIC_API_ORIGIN=$VITE_PUBLIC_API_ORIGIN
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/*/node_modules ./packages/*/node_modules || true
 COPY . .

@@ -36,6 +36,41 @@
       "when": 1742900000000,
       "tag": "0004_twogis_card_category",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1743000000000,
+      "tag": "0005_scraper_runs_last_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1743100000000,
+      "tag": "0006_scraper_runs_slice_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1774846390339,
+      "tag": "0007_outreach_log_alignment",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1774850000000,
+      "tag": "0008_lead_sequence_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1774950000000,
+      "tag": "0009_tenant_leads",
+      "breakpoints": true
     }
   ]
 }

@@ -6,7 +6,7 @@ import { env } from '@leadiya/config'
 
 const twogisEnrichJobOpts = { removeOnComplete: 200, removeOnFail: 500 } as const
 import { leadDetailFields, leadExportFields, leadListFields } from '../lib/lead-select.js'
-import type { AppEnv } from '../server.js'
+import type { AppEnv } from '../types.js'
 
 const companiesRouter = new Hono<AppEnv>()
 

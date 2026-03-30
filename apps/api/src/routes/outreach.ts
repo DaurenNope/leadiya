@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
-import { db, leads, outreachLog, contacts, eq, desc, and, sql } from '@leadiya/db'
+import { Redis } from 'ioredis'
+import { db, leads, outreachLog, contacts, leadSequenceState, eq, desc, and, sql } from '@leadiya/db'
 import { whatsappOutreachQueue } from '@leadiya/queue'
 import { env } from '@leadiya/config'
 import { z } from 'zod'
@@ -8,7 +9,7 @@ import { loadOutreachSequences, loadBusinessConfig, listSequenceSummaries } from
 import { renderTemplate, buildOutreachVars } from '../lib/render-outreach.js'
 import { phoneDigitsForWa, waMeLink } from '../lib/wa-link.js'
 import { buildMailtoUrl, splitEmailTemplate } from '../lib/mailto.js'
-import type { AppEnv } from '../server.js'
+import type { AppEnv } from '../types.js'
 
 function isBaileysSendEnabled(): boolean {
   const v = env.WHATSAPP_BAILEYS_ENABLED
@@ -232,6 +233,13 @@ const sendSchema = z.object({
   phoneOverride: z.string().optional(),
 })
 
+/** Quick send from dashboard inbox: phone + body, no lead. */
+const directWaSendSchema = z.object({
+  channel: z.literal('whatsapp'),
+  phone: z.string().min(1),
+  body: z.string().min(1),
+})
+
 outreachRouter.post('/send', async (c) => {
   if (!isBaileysSendEnabled()) {
     return c.json(
@@ -240,7 +248,22 @@ outreachRouter.post('/send', async (c) => {
     )
   }
 
-  const parsed = sendSchema.safeParse(await c.req.json())
+  const rawBody = await c.req.json()
+  const direct = directWaSendSchema.safeParse(rawBody)
+  if (direct.success) {
+    const digits = phoneDigitsForWa(direct.data.phone)
+    if (!digits) {
+      return c.json({ error: 'Invalid or empty phone number', code: 'VALIDATION_ERROR' }, 400)
+    }
+    const job = await whatsappOutreachQueue.add(
+      'send',
+      { phoneDigits: digits, body: direct.data.body.trim() },
+      { removeOnComplete: true }
+    )
+    return c.json({ queued: true, jobId: job.id }, 202)
+  }
+
+  const parsed = sendSchema.safeParse(rawBody)
   if (!parsed.success) {
     return c.json({ error: 'Invalid body', code: 'VALIDATION_ERROR', details: parsed.error.format() }, 400)
   }
@@ -446,6 +469,118 @@ outreachRouter.post('/log', async (c) => {
     .returning()
 
   return c.json(row, 201)
+})
+
+let _redis: Redis | null = null
+function getRedis(): Redis {
+  if (!_redis) _redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 3, lazyConnect: true })
+  return _redis
+}
+
+outreachRouter.get('/whatsapp/status', async (c) => {
+  const redis = getRedis()
+  const tenant = c.get('tenant') as { id: string } | null
+  const tenantId = tenant?.id
+
+  const statusKeyPrefix = tenantId ? `wa:status:${tenantId}` : 'wa:connection:status'
+  const qrKeyPrefix = tenantId ? `wa:qr:${tenantId}` : 'wa:connection:qr'
+
+  const [statusRaw, qr] = await Promise.all([
+    redis.get(statusKeyPrefix),
+    redis.get(qrKeyPrefix),
+  ])
+  const parsed = statusRaw ? JSON.parse(statusRaw) as { status: string; updatedAt: number } : null
+  return c.json({
+    status: parsed?.status ?? 'unknown',
+    updatedAt: parsed?.updatedAt ?? null,
+    qr: qr ?? null,
+    baileysSendEnabled: isBaileysSendEnabled(),
+  })
+})
+
+// ── Sequence Management ──────────────────────────────────────
+
+outreachRouter.post('/sequences/start', async (c) => {
+  const body = await c.req.json()
+  const { leadId, sequenceKey = 'cold_outreach', contactId } = body as { leadId?: string; sequenceKey?: string; contactId?: string }
+  if (!leadId) return c.json({ error: 'leadId required' }, 400)
+
+  const now = new Date()
+  const [state] = await db
+    .insert(leadSequenceState)
+    .values({
+      leadId,
+      contactId: contactId ?? null,
+      sequenceKey,
+      currentStep: 0,
+      status: 'active',
+      intent: 'unknown',
+      startedAt: now,
+      lastOutreachAt: now,
+    })
+    .onConflictDoNothing()
+    .returning()
+
+  return c.json({ started: Boolean(state), stateId: state?.id ?? null })
+})
+
+outreachRouter.get('/sequences/active', async (c) => {
+  const limitRaw = c.req.query('limit')
+  const limit = Math.min(100, parseInt(limitRaw ?? '50', 10) || 50)
+
+  const rows = await db
+    .select({
+      id: leadSequenceState.id,
+      leadId: leadSequenceState.leadId,
+      sequenceKey: leadSequenceState.sequenceKey,
+      currentStep: leadSequenceState.currentStep,
+      status: leadSequenceState.status,
+      intent: leadSequenceState.intent,
+      lastOutreachAt: leadSequenceState.lastOutreachAt,
+      lastReplyAt: leadSequenceState.lastReplyAt,
+      nextStepAt: leadSequenceState.nextStepAt,
+      messageCount: leadSequenceState.messageCount,
+      qualificationData: leadSequenceState.qualificationData,
+      leadName: leads.name,
+      leadCity: leads.city,
+      leadCategory: leads.category,
+    })
+    .from(leadSequenceState)
+    .innerJoin(leads, eq(leadSequenceState.leadId, leads.id))
+    .where(eq(leadSequenceState.status, 'active'))
+    .orderBy(desc(leadSequenceState.updatedAt))
+    .limit(limit)
+
+  return c.json({ items: rows })
+})
+
+// ── Resend Inbound Webhook ───────────────────────────────────
+
+outreachRouter.post('/webhook/resend-inbound', async (c) => {
+  const payload = await c.req.json()
+  const from = payload.from as string | undefined
+  const subject = payload.subject as string | undefined
+  const text = payload.text as string | undefined
+
+  if (!from || !text) {
+    return c.json({ received: true, processed: false, reason: 'missing fields' })
+  }
+
+  const [lead] = await db
+    .select({ id: leads.id })
+    .from(leads)
+    .where(sql`${leads.email} = ${from}`)
+    .limit(1)
+
+  await db.insert(outreachLog).values({
+    leadId: lead?.id ?? null,
+    channel: 'email',
+    direction: 'inbound',
+    body: subject ? `Тема: ${subject}\n\n${text}` : text,
+    status: 'received',
+  })
+
+  return c.json({ received: true, processed: true, leadId: lead?.id ?? null })
 })
 
 export { outreachRouter }

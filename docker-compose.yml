@@ -1,13 +1,11 @@
-# Local / small deploy: dashboard nginx proxies /api → Hono.
-# Requires .env with DATABASE_*, REDIS_URL (API exits on boot if env invalid).
-# If Postgres/Redis run on your machine (not in Compose), use host.docker.internal
-# in DATABASE_* and REDIS_URL so the api container can reach them.
+# Leadiya SaaS — Docker Compose for production deployment.
 #
-#   docker compose up --build
+# Required: .env with DATABASE_URL, REDIS_URL, SUPABASE_*, VITE_SUPABASE_*
+# 
+#   docker compose up --build -d
 #   open http://localhost:8080
 #
-# API health: curl http://localhost:3001/health  (Compose maps host 3001 → container; local CLI dev uses PORT=3041 by default)
-# Workers: Baileys WhatsApp — set WHATSAPP_BAILEYS_ENABLED=true in .env, watch workers logs for QR (linked device).
+# API health: curl http://localhost:3001/health
 
 services:
   api:
@@ -17,23 +15,36 @@ services:
     ports:
       - "3001:3001"
     env_file: .env
-    # Keep container on 3001 even if .env sets PORT=3041 for local CLI dev.
     environment:
       PORT: "3001"
+    restart: unless-stopped
 
   workers:
     build:
       context: .
       target: workers
     env_file: .env
+    environment:
+      WHATSAPP_BAILEYS_AUTH_DIR: /app/data/baileys-auth
+    volumes:
+      - wa-auth:/app/data/baileys-auth
     depends_on:
       - api
+    restart: unless-stopped
 
   dashboard:
     build:
       context: .
       target: dashboard
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+        VITE_PUBLIC_API_ORIGIN: ${VITE_PUBLIC_API_ORIGIN:-}
     ports:
       - "8080:80"
     depends_on:
       - api
+    restart: unless-stopped
+
+volumes:
+  wa-auth:

@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { db, leads, contacts, eq } from '@leadiya/db'
 import { sql } from 'drizzle-orm'
 import { env } from '@leadiya/config'
-import type { AppEnv } from '../server.js'
+import type { AppEnv } from '../types.js'
 import { sanitizeLeadPayload } from '../lib/lead-quality.js'
 
 const enrichmentQueue = new Queue('enrichment', { connection: { url: env.REDIS_URL } })
@@ -136,7 +136,7 @@ leadsRouter.post('/bulk', async (c) => {
     try {
       const binValue = cleaned.bin && cleaned.bin.length === 12 ? cleaned.bin : null
 
-      await db
+      const upserted = await db
         .insert(leads)
         .values({
           id: leadId,
@@ -183,6 +183,11 @@ leadsRouter.post('/bulk', async (c) => {
             },
           },
         })
+        .returning({ id: leads.id })
+
+      for (const row of upserted) {
+        newLeadIds.push(row.id)
+      }
 
       if (cleaned.phones.length > 0) {
         for (const phone of cleaned.phones) {

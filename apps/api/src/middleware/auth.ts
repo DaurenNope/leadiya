@@ -59,6 +59,10 @@ export const authMiddleware: MiddlewareHandler = async (c, next) => {
     }
   }
 
+  if (c.req.path === '/api/stripe/webhook' || c.req.path === '/api/outreach/webhook/resend-inbound') {
+    return next()
+  }
+
   if (!env.SUPABASE_JWT_SECRET && !supabase) {
     return c.json({ error: 'Auth not configured', code: 'AUTH_NOT_CONFIGURED' }, 500)
   }

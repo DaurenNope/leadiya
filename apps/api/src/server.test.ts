@@ -8,6 +8,7 @@ const ctx = vi.hoisted(() => {
   vi.stubEnv('DATABASE_DIRECT_URL', 'postgresql://user:pass@localhost:5432/leadiya_test')
   vi.stubEnv('REDIS_URL', 'redis://127.0.0.1:6379')
   vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_vitest_placeholder_key_only')
+  vi.stubEnv('DEFAULT_TENANT_ID', '')
 
   const selectQueue: unknown[] = []
 

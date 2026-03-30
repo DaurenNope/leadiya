@@ -5,7 +5,7 @@ import { desc, eq, and, sql } from 'drizzle-orm'
 import { Queue } from 'bullmq'
 import { z } from 'zod'
 import { env } from '@leadiya/config'
-import type { AppEnv } from '../server.js'
+import type { AppEnv } from '../types.js'
 
 const scrapersRouter = new Hono<AppEnv>()
 
@@ -140,9 +140,10 @@ scrapersRouter.post('/2gis', async (c) => {
     return c.json({ runId: existing.id, message: 'Scraper already running', existing: true }, 202)
   }
 
+  const totalSlices = cities.length * categories.length
   const [row] = await db
     .insert(scraperRuns)
-    .values({ scraper: '2gis', status: 'running' })
+    .values({ scraper: '2gis', status: 'running', lastProgressAt: new Date(), totalSlices })
     .returning({ id: scraperRuns.id })
 
   const runId = row.id

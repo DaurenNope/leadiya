@@ -48,3 +48,6 @@ data/
 
 # Test artifacts
 .test-checkpoints/
+
+# Plan files (agent working docs)
+docs/superpowers/

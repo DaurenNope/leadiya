@@ -4,7 +4,7 @@ import { db } from '@leadiya/db'
 import { tenants } from '@leadiya/db'
 import { eq } from 'drizzle-orm'
 import { env } from '@leadiya/config'
-import type { AppEnv } from '../server.js'
+import type { AppEnv } from '../types.js'
 
 const stripe = new Stripe(env.STRIPE_SECRET_KEY)
 const stripeRouter = new Hono<AppEnv>()
@@ -12,6 +12,9 @@ const stripeRouter = new Hono<AppEnv>()
 // Create checkout session
 stripeRouter.post('/checkout', async (c) => {
   const tenant = c.get('tenant')
+  if (!tenant?.id) {
+    return c.json({ error: 'Tenant not configured' }, 400)
+  }
   const { plan } = await c.req.json()
 
   const prices = {

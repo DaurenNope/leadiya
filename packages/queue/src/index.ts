@@ -18,6 +18,7 @@ export enum QueueName {
     PROMOTION = 'promotion',
     /** Baileys outbound WhatsApp sends (worker concurrency must stay 1) */
     WHATSAPP_OUTREACH = 'whatsapp_outreach',
+    EMAIL_OUTREACH = 'email_outreach',
 }
 
 // ─── Typed Job Data ─────────────────────────────────────────────────────────
@@ -35,12 +36,25 @@ export interface EnrichmentJobData {
 }
 
 export interface WhatsAppOutreachJobData {
-    leadId: string;
+    /** When omitted, outbound log row has no CRM lead (e.g. inbox quick-send). */
+    leadId?: string;
     /** Normalized digits (e.g. 7XXXXXXXXXX) for @s.whatsapp.net */
     phoneDigits: string;
     body: string;
     sequenceKey?: string;
     stepIndex?: number;
+    /** Tenant whose WhatsApp session should be used for sending. */
+    tenantId?: string;
+}
+
+export interface EmailOutreachJobData {
+    leadId: string;
+    to: string;
+    subject: string;
+    body: string;
+    sequenceKey?: string;
+    stepIndex?: number;
+    tenantId?: string;
 }
 
 // ─── Queue Manager ──────────────────────────────────────────────────────────
@@ -81,4 +95,7 @@ export const discoveryQueue = QueueManager.getQueue<DiscoveryJobData>(QueueName.
 export const enrichmentQueue = QueueManager.getQueue<EnrichmentJobData>(QueueName.ENRICHMENT);
 export const whatsappOutreachQueue = QueueManager.getQueue<WhatsAppOutreachJobData>(
     QueueName.WHATSAPP_OUTREACH
+);
+export const emailOutreachQueue = QueueManager.getQueue<EmailOutreachJobData>(
+    QueueName.EMAIL_OUTREACH
 );

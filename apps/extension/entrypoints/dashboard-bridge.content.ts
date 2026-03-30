@@ -4,7 +4,12 @@ const PING = 'LEADIYA_EXTENSION_PING'
 const PONG = 'LEADIYA_EXTENSION_PONG'
 
 export default defineContentScript({
-  matches: ['http://localhost:*/*', 'http://127.0.0.1:*/*'],
+  matches: [
+    'http://localhost:*/*',
+    'http://127.0.0.1:*/*',
+    'https://localhost:*/*',
+    'https://127.0.0.1:*/*',
+  ],
 
   main() {
     window.addEventListener('message', (event: MessageEvent) => {

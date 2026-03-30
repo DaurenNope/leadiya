@@ -9,10 +9,12 @@ import { WhatsAppInboxView } from './components/WhatsAppInboxView'
 import { LeadSidePanel } from './components/LeadSidePanel'
 import { ScraperRunBanner } from './components/ScraperRunBanner'
 import { OverviewView } from './components/OverviewView'
+import { AuthPage } from './components/AuthPage'
+import { useAuth } from './context/AuthContext'
 import { useToast } from './hooks/useToast'
 import { useExtensionStatus } from './context/ExtensionStatusContext'
 import type { Lead } from './types'
-import { apiUrl } from './apiBase'
+import { apiUrl, authFetch } from './apiBase'
 
 type View = 'home' | 'intelligence' | 'crm' | 'whatsapp' | 'scrapers' | 'operations' | 'system'
 
@@ -64,7 +66,11 @@ function scraperRunVisual(status: string) {
   }
 }
 
+type WaConnStatus = 'connected' | 'waiting_qr' | 'disconnected'
+
 export default function App() {
+  const { user, loading: authLoading, signOut } = useAuth()
+
   const [view, setView] = useState<View>('home')
   const [isDiscoveryOpen, setIsDiscoveryOpen] = useState(false)
   const extensionStatus = useExtensionStatus()
@@ -77,7 +83,27 @@ export default function App() {
   const [crmSeedLeadId, setCrmSeedLeadId] = useState<string | null>(null)
   /** When set, Leads list filters to leads saved under this 2GIS run (raw_data). */
   const [leadsScraperRunFilter, setLeadsScraperRunFilter] = useState<string | null>(null)
+  const [waConnStatus, setWaConnStatus] = useState<WaConnStatus | null>(null)
   const mainScrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const res = await authFetch(apiUrl('/api/outreach/whatsapp/status'))
+        if (res.ok) {
+          const data = (await res.json()) as { status: string }
+          const s = data.status
+          setWaConnStatus(s === 'connected' ? 'connected' : s === 'waiting_qr' ? 'waiting_qr' : 'disconnected')
+        }
+      } catch { /* ignore */ }
+    }
+    void poll()
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return
+      void poll()
+    }, 15_000)
+    return () => window.clearInterval(id)
+  }, [])
 
   const scrollMainToTop = useCallback(() => {
     requestAnimationFrame(() => {
@@ -89,7 +115,7 @@ export default function App() {
     try {
       const q = new URLSearchParams({ limit: '12', scraper: '2gis' })
       if (opts?.bustCache) q.set('nocache', '1')
-      const res = await fetch(apiUrl(`/api/scrapers/runs?${q.toString()}`))
+      const res = await authFetch(apiUrl(`/api/scrapers/runs?${q.toString()}`))
       if (!res.ok) {
         setRunsFetchError('API запусков недоступен')
         return
@@ -103,6 +129,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch + interval refresh
     void loadScraperRuns({ bustCache: true })
     const id = setInterval(() => {
       if (document.visibilityState !== 'visible') return
@@ -152,7 +179,7 @@ export default function App() {
     headless?: boolean
   }) => {
     try {
-      const res = await fetch(apiUrl('/api/scrapers/2gis'), {
+      const res = await authFetch(apiUrl('/api/scrapers/2gis'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -298,6 +325,16 @@ export default function App() {
                 ? 'Расширение'
                 : 'Настройки'
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#020617]">
+        <div className="w-10 h-10 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  if (!user) return <AuthPage />
+
   return (
     <div className="flex h-screen overflow-hidden font-sans text-slate-50 bg-[#020617] bg-[radial-gradient(ellipse_100%_60%_at_50%_-10%,rgba(14,165,233,0.07),transparent_55%)]">
       {/* Sidebar Workspace */}
@@ -334,37 +371,77 @@ export default function App() {
           {workspaces.map((ws, i) => (
             <div key={i} className="space-y-2">
               {!isSidebarCollapsed && (
-                <h3 className="px-4 text-[10px] font-medium text-slate-500 mb-3 animate-in fade-in duration-700">
+                <h3 className="px-4 text-xs font-medium text-slate-500 mb-3 animate-in fade-in duration-700">
                   {ws.label}
                 </h3>
               )}
               <div className="space-y-1">
-                {ws.items.map((item) => (
-                  <button 
-                    key={item.id}
-                    onClick={() => setView(item.id as View)}
-                    title={isSidebarCollapsed ? item.label : undefined}
-                    className={`w-full sidebar-item flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'} ${view === item.id ? 'sidebar-item-active' : ''}`}
-                  >
-                    <div className="shrink-0 flex items-center justify-center">
-                      {item.icon}
-                    </div>
-                    {!isSidebarCollapsed && (
-                      <span className="ml-3 truncate animate-in fade-in slide-in-from-left-2 duration-300">
-                        {item.label}
-                      </span>
-                    )}
-                  </button>
-                ))}
+                {ws.items.map((item) => {
+                  const isWa = item.id === 'whatsapp'
+                  const waDotColor =
+                    waConnStatus === 'connected'
+                      ? 'bg-emerald-400'
+                      : waConnStatus === 'waiting_qr'
+                        ? 'bg-amber-400 animate-pulse'
+                        : 'bg-slate-500'
+                  return (
+                    <button 
+                      key={item.id}
+                      onClick={() => setView(item.id as View)}
+                      title={isSidebarCollapsed ? item.label : undefined}
+                      className={`w-full sidebar-item flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'} ${view === item.id ? 'sidebar-item-active' : ''}`}
+                    >
+                      <div className="shrink-0 flex items-center justify-center relative">
+                        {item.icon}
+                        {isWa && isSidebarCollapsed && waConnStatus != null && (
+                          <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${waDotColor}`} />
+                        )}
+                      </div>
+                      {!isSidebarCollapsed && (
+                        <span className="ml-3 truncate animate-in fade-in slide-in-from-left-2 duration-300 flex items-center gap-2">
+                          {item.label}
+                          {isWa && waConnStatus != null && (
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${waDotColor}`} />
+                          )}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
               </div>
             </div>
           ))}
         </nav>
 
         <div className="mt-auto pt-6 border-t border-white/5 space-y-4">
+          {/* User info + sign out */}
+          {!isSidebarCollapsed && user?.email && (
+            <div className="flex items-center justify-between px-2">
+              <span className="text-xs text-slate-500 truncate max-w-[10rem]" title={user.email}>{user.email}</span>
+              <button
+                onClick={() => signOut()}
+                className="text-xs text-slate-600 hover:text-rose-400 transition-colors"
+                title="Выйти"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              </button>
+            </div>
+          )}
+          {isSidebarCollapsed && (
+            <div className="flex justify-center">
+              <button
+                onClick={() => signOut()}
+                className="text-slate-600 hover:text-rose-400 transition-colors"
+                title="Выйти"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              </button>
+            </div>
+          )}
+
           <div className={`flex items-center justify-between px-2 ${isSidebarCollapsed ? 'justify-center' : ''}`}>
             {!isSidebarCollapsed && (
-              <span className="text-[10px] font-semibold text-slate-500">Расширение</span>
+              <span className="text-xs font-semibold text-slate-500">Расширение</span>
             )}
             <div
               title={
@@ -374,7 +451,7 @@ export default function App() {
                     ? 'Проверка связи с расширением…'
                     : 'Установите и включите расширение Leadiya, откройте эту панель в том же профиле Chrome и обновите вкладку.'
               }
-              className={`px-2 py-0.5 rounded text-[8px] font-semibold border flex items-center gap-1.5 transition-all cursor-default ${
+              className={`px-2 py-0.5 rounded text-xs font-semibold border flex items-center gap-1.5 transition-all cursor-default ${
                 extensionStatus === 'connected'
                   ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
                   : extensionStatus === 'checking'
@@ -395,13 +472,13 @@ export default function App() {
           {!isSidebarCollapsed && (
             <div className="px-2 space-y-2 border-t border-white/5 pt-4">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Задачи 2GIS</span>
+                <span className="text-xs font-black text-slate-500 uppercase tracking-widest">Задачи 2GIS</span>
                 {latest2gisRun?.status === 'running' && (
-                  <span className="text-[8px] font-black text-amber-400 uppercase tracking-widest animate-pulse">Идёт</span>
+                  <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest animate-pulse">Идёт</span>
                 )}
               </div>
               {runsFetchError && (
-                <p className="text-[9px] text-rose-400/90 leading-snug">{runsFetchError}</p>
+                <p className="text-xs text-rose-400/90 leading-snug">{runsFetchError}</p>
               )}
               {!runsFetchError && scraperRuns2gis.length === 0 && (
                 <p className="text-[9px] text-slate-600 font-medium">Запусков пока нет.</p>
@@ -420,12 +497,12 @@ export default function App() {
                       key={run.id}
                       className="flex items-start justify-between gap-2 rounded-lg bg-white/[0.02] border border-white/5 px-2 py-1.5"
                     >
-                      <span className="text-[9px] text-slate-500 tabular-nums shrink-0">{formatRunTime(run.startedAt)}</span>
+                      <span className="text-xs text-slate-500 tabular-nums shrink-0">{formatRunTime(run.startedAt)}</span>
                       <div className="min-w-0 flex-1 text-right">
-                        <span className={`inline-block text-[7px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${chip}`}>
+                        <span className={`inline-block text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${chip}`}>
                           {label}
                         </span>
-                        <p className="text-[8px] text-slate-500 mt-0.5 truncate" title={run.error ?? undefined}>
+                        <p className="text-[10px] text-slate-500 mt-0.5 truncate" title={run.error ?? undefined}>
                           {detail}
                         </p>
                       </div>
@@ -465,20 +542,20 @@ export default function App() {
         <header className="min-h-[4.5rem] py-3 glass-header flex items-center justify-between px-8 sm:px-10 relative z-40">
           <div className="min-w-0 max-w-[min(100%,42rem)]">
             <h2 className="text-base sm:text-lg font-semibold text-slate-100 tracking-tight">{viewTitle}</h2>
-            <p className="text-[12px] text-slate-500 mt-1 leading-relaxed">
+            <p className="text-sm text-slate-500 mt-1 leading-relaxed">
               {view === 'home'
-                ? 'Краткие метрики, быстрые переходы и блок обновлений. Таблица лидов — в разделе «Список лидов».'
+                ? 'Ключевые метрики, активность и состояние всех систем.'
                 : view === 'intelligence'
-                  ? 'Таблица по данным Postgres. Детали карточки, сайт, 2GIS и ICP — в боковой панели по клику на строку.'
+                  ? 'Все собранные компании. Кликните на строку для подробностей.'
                   : view === 'crm'
-                    ? 'Клиенты слева, карточка и WhatsApp справа — как в мессенджер‑CRM. Из ленты WhatsApp открывайте того же клиента одной кнопкой.'
+                    ? 'Выберите компанию и отправьте сообщение через WhatsApp или почту.'
                     : view === 'whatsapp'
-                      ? 'Лента сообщений из журнала; ответ оформляйте в CRM. Входящие — при Baileys и WHATSAPP_INBOUND_LOG.'
+                      ? 'Все диалоги WhatsApp: входящие и исходящие.'
                       : view === 'scrapers'
-                        ? 'История и прогресс. Рассылки — в CRM / WhatsApp; компании — в списке лидов.'
+                        ? 'Запуски сбора данных с 2GIS и их статусы.'
                         : view === 'operations'
-                          ? 'Связь с расширением Chrome через postMessage в этой вкладке (без отдельного WebSocket-порта).'
-                          : 'Доступность API, выгрузки и сведения о workspace'}
+                          ? 'Статус подключения расширения Chrome для автоматического сбора.'
+                          : 'Подключения, автоматизация, настройки рассылок и данные.'}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -525,6 +602,7 @@ export default function App() {
               onOpenExtension={() => setView('operations')}
               onOpenCrm={() => setView('crm')}
               onOpenDiscovery={() => setIsDiscoveryOpen(true)}
+              onOpenWhatsApp={() => setView('whatsapp')}
             />
           )}
           {view === 'intelligence' && (
@@ -554,6 +632,7 @@ export default function App() {
                 setCrmSeedLeadId(null)
                 setView('crm')
               }}
+              onOpenSettings={() => setView('system')}
             />
           )}
           {view === 'scrapers' && (

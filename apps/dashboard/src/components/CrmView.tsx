@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Lead } from '../types'
-import { apiUrl } from '../apiBase'
+import { apiUrl, authFetch } from '../apiBase'
 import { OutreachCrmForm } from './OutreachCrmForm'
-import { WhatsAppConnectPanel } from './WhatsAppConnectPanel'
-import { leadStatusLabel } from '../lib/lead-ui'
-import { primaryEmail } from '../lib/lead-contact'
 import { phoneDigitsForWa, waMeLink } from '../lib/wa-link'
+import { useToast } from '../hooks/useToast'
 
 type Props = {
   seedLeadId: string | null
@@ -13,6 +11,54 @@ type Props = {
   onBrowseLeads: () => void
   /** Открыть раздел «WhatsApp» — общая лента из журнала */
   onOpenWhatsApp?: () => void
+}
+
+type CrmStatus = 'new' | 'contacted' | 'qualified' | 'proposal' | 'closed' | 'lost'
+
+type CrmLead = {
+  id: string
+  leadId: string
+  crmStatus: string | null
+  notes: string | null
+  tags: unknown
+  claimedAt: string
+  tlUpdatedAt: string | null
+  companyName: string | null
+  companyCity: string | null
+  companyCategory: string | null
+  companyAddress: string | null
+  companyWebsite: string | null
+  companyEmail: string | null
+  companyWhatsapp: string | null
+  companyInstagram: string | null
+  companyTelegram: string | null
+  companyPhone: string | null
+  companyRating: string | null
+  companyIcpScore: number | null
+}
+
+const CRM_STATUSES: { value: 'all' | CrmStatus; label: string }[] = [
+  { value: 'all', label: 'Все' },
+  { value: 'new', label: 'Новые' },
+  { value: 'contacted', label: 'В работе' },
+  { value: 'qualified', label: 'Квалифицированные' },
+  { value: 'proposal', label: 'Предложение' },
+  { value: 'closed', label: 'Закрыт' },
+  { value: 'lost', label: 'Потерян' },
+]
+
+const CRM_STATUS_LABEL: Record<CrmStatus, string> = {
+  new: 'Новый',
+  contacted: 'В работе',
+  qualified: 'Квалифицирован',
+  proposal: 'Предложение',
+  closed: 'Закрыт',
+  lost: 'Потерян',
+}
+
+function crmStatusLabel(status: string | null | undefined): string {
+  const s = (status || 'new').toLowerCase() as CrmStatus
+  return CRM_STATUS_LABEL[s] ?? status ?? '—'
 }
 
 function initials(name: string | null | undefined): string {
@@ -23,72 +69,210 @@ function initials(name: string | null | undefined): string {
   return t.slice(0, 2).toUpperCase()
 }
 
-function statusPillClass(status: string | null | undefined): string {
+function crmStatusPillClass(status: string | null | undefined): string {
   const s = (status || 'new').toLowerCase()
-  if (s === 'enriched' || s === 'valid') return 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/25'
-  if (s === 'failed') return 'bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/25'
-  if (s === 'archived') return 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30'
+  if (s === 'closed') return 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/25'
+  if (s === 'qualified' || s === 'proposal') return 'bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/25'
+  if (s === 'contacted') return 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30'
+  if (s === 'lost') return 'bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/25'
   return 'bg-slate-500/15 text-slate-400 ring-1 ring-white/10'
 }
 
-function primaryPhone(lead: Lead | null): string | null {
+function leadToCrmDraft(lead: Lead): CrmLead {
+  return {
+    id: '',
+    leadId: lead.id,
+    crmStatus: 'new',
+    notes: null,
+    tags: null,
+    claimedAt: lead.createdAt,
+    tlUpdatedAt: null,
+    companyName: lead.name,
+    companyCity: lead.city,
+    companyCategory: lead.category ?? null,
+    companyAddress: lead.address ?? null,
+    companyWebsite: lead.website ?? null,
+    companyEmail: lead.email ?? null,
+    companyWhatsapp: lead.whatsapp ?? null,
+    companyInstagram: lead.instagram ?? null,
+    companyTelegram: lead.telegram ?? null,
+    companyPhone: lead.phones?.[0] ?? lead.contacts?.find((c) => c.phone)?.phone ?? null,
+    companyRating: lead.rating2gis ?? null,
+    companyIcpScore: lead.icpScore ?? null,
+  }
+}
+
+function mergeLeadIntoCrm(crm: CrmLead, lead: Lead): CrmLead {
+  return {
+    ...crm,
+    companyName: lead.name ?? crm.companyName,
+    companyCity: lead.city ?? crm.companyCity,
+    companyCategory: lead.category ?? crm.companyCategory,
+    companyAddress: lead.address ?? crm.companyAddress,
+    companyWebsite: lead.website ?? crm.companyWebsite,
+    companyEmail: lead.email ?? crm.companyEmail,
+    companyWhatsapp: lead.whatsapp ?? crm.companyWhatsapp,
+    companyInstagram: lead.instagram ?? crm.companyInstagram,
+    companyTelegram: lead.telegram ?? crm.companyTelegram,
+    companyPhone:
+      crm.companyPhone ?? lead.phones?.[0] ?? lead.contacts?.find((c) => c.phone)?.phone ?? null,
+    companyRating: lead.rating2gis ?? crm.companyRating,
+    companyIcpScore: lead.icpScore ?? crm.companyIcpScore,
+  }
+}
+
+function primaryPhoneFromCrm(lead: CrmLead | null): string | null {
   if (!lead) return null
-  const w = lead.whatsapp?.trim()
+  const w = lead.companyWhatsapp?.trim()
   if (w) return w
-  const c = lead.contacts?.find((x) => x.phone?.trim())?.phone?.trim()
-  return c || null
+  const p = lead.companyPhone?.trim()
+  return p || null
+}
+
+async function findCrmRowForLeadId(
+  leadId: string,
+  toast: (message: string, type?: 'success' | 'error' | 'info') => void,
+): Promise<CrmLead | null> {
+  const PAGE = 100
+  let offset = 0
+  for (let page = 0; page < 10; page++) {
+    const res = await authFetch(
+      apiUrl(`/api/crm/leads?limit=${PAGE}&offset=${offset}&sortBy=claimedAt&sortOrder=desc`),
+    )
+    if (!res.ok) {
+      toast('Не удалось найти запись CRM', 'error')
+      return null
+    }
+    const data = (await res.json()) as { items?: CrmLead[]; pagination?: { total: number } }
+    const items = Array.isArray(data.items) ? data.items : []
+    const found = items.find((i) => i.leadId === leadId)
+    if (found) return found
+    if (items.length < PAGE) break
+    const total = data.pagination?.total ?? 0
+    offset += PAGE
+    if (offset >= total) break
+  }
+  return null
 }
 
 export function CrmView({ seedLeadId, onSeedConsumed, onBrowseLeads, onOpenWhatsApp }: Props) {
+  const { toast } = useToast()
+  const PAGE_SIZE = 60
   const [searchInput, setSearchInput] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
-  const [pickerLeads, setPickerLeads] = useState<Lead[]>([])
+  const [statusTab, setStatusTab] = useState<'all' | CrmStatus>('all')
+  const [pickerLeads, setPickerLeads] = useState<CrmLead[]>([])
   const [pickerLoading, setPickerLoading] = useState(false)
   const [pickerError, setPickerError] = useState<string | null>(null)
-  const [selected, setSelected] = useState<Lead | null>(null)
+  const [selected, setSelected] = useState<CrmLead | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [offset, setOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [listTotal, setListTotal] = useState(0)
+  const [crmStatsTotal, setCrmStatsTotal] = useState<number | null>(null)
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedQ(searchInput.trim()), 320)
     return () => window.clearTimeout(t)
   }, [searchInput])
 
+  const refreshStats = useCallback(async () => {
+    try {
+      const res = await authFetch(apiUrl('/api/crm/stats'))
+      if (!res.ok) return
+      const data = (await res.json()) as { total?: number }
+      if (typeof data.total === 'number') setCrmStatsTotal(data.total)
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
   const loadPicker = useCallback(async () => {
     setPickerLoading(true)
     setPickerError(null)
+    setOffset(0)
     try {
       const q = debouncedQ ? `&q=${encodeURIComponent(debouncedQ)}` : ''
-      const res = await fetch(apiUrl(`/api/companies?limit=60&offset=0&sortBy=createdAt&sortOrder=desc${q}`))
-      const data = (await res.json().catch(() => ({}))) as { items?: Lead[]; error?: string }
+      const st =
+        statusTab !== 'all' ? `&status=${encodeURIComponent(statusTab)}` : '&status=all'
+      const res = await authFetch(
+        apiUrl(
+          `/api/crm/leads?limit=${PAGE_SIZE}&offset=0&sortBy=claimedAt&sortOrder=desc${st}${q}`,
+        ),
+      )
+      const data = (await res.json().catch(() => ({}))) as {
+        items?: CrmLead[]
+        error?: string
+        pagination?: { total: number; limit: number; offset: number }
+      }
       if (!res.ok) {
         setPickerLeads([])
         setPickerError(data.error || `Ошибка загрузки (${res.status})`)
+        setHasMore(false)
+        setListTotal(0)
         return
       }
-      setPickerLeads(Array.isArray(data.items) ? data.items : [])
+      const items = Array.isArray(data.items) ? data.items : []
+      setPickerLeads(items)
+      setHasMore(items.length === PAGE_SIZE)
+      setListTotal(data.pagination?.total ?? items.length)
+      void refreshStats()
     } catch (e) {
       setPickerLeads([])
       setPickerError(e instanceof Error ? e.message : 'Сеть недоступна')
+      setHasMore(false)
+      setListTotal(0)
     } finally {
       setPickerLoading(false)
     }
-  }, [debouncedQ])
+  }, [debouncedQ, statusTab, refreshStats])
+
+  const loadMore = useCallback(async () => {
+    const nextOffset = offset + PAGE_SIZE
+    setLoadingMore(true)
+    try {
+      const q = debouncedQ ? `&q=${encodeURIComponent(debouncedQ)}` : ''
+      const st =
+        statusTab !== 'all' ? `&status=${encodeURIComponent(statusTab)}` : '&status=all'
+      const res = await authFetch(
+        apiUrl(
+          `/api/crm/leads?limit=${PAGE_SIZE}&offset=${nextOffset}&sortBy=claimedAt&sortOrder=desc${st}${q}`,
+        ),
+      )
+      const data = (await res.json().catch(() => ({}))) as {
+        items?: CrmLead[]
+        pagination?: { total: number }
+      }
+      if (res.ok) {
+        const items = Array.isArray(data.items) ? data.items : []
+        setPickerLeads((prev) => [...prev, ...items])
+        setOffset(nextOffset)
+        setHasMore(items.length === PAGE_SIZE)
+        if (typeof data.pagination?.total === 'number') setListTotal(data.pagination.total)
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [offset, debouncedQ, statusTab])
 
   useEffect(() => {
     void loadPicker()
   }, [loadPicker])
 
-  const loadLeadDetail = useCallback(async (l: Lead) => {
+  const loadLeadDetail = useCallback(async (l: CrmLead) => {
     setSelected(l)
     setDetailLoading(true)
     try {
-      const res = await fetch(apiUrl(`/api/companies/${l.id}`))
+      const res = await authFetch(apiUrl(`/api/companies/${l.leadId}`))
       if (res.ok) {
         const full = (await res.json()) as Lead
-        setSelected(full)
+        setSelected(mergeLeadIntoCrm(l, full))
       }
     } catch {
-      /* оставляем черновик из списка */
+      /* keep CRM row */
     } finally {
       setDetailLoading(false)
     }
@@ -99,13 +283,19 @@ export function CrmView({ seedLeadId, onSeedConsumed, onBrowseLeads, onOpenWhats
     let cancelled = false
     ;(async () => {
       try {
-        const res = await fetch(apiUrl(`/api/companies/${seedLeadId}`))
-        if (!res.ok) return
-        const lead = (await res.json()) as Lead
-        if (!cancelled) {
-          setSelected(lead)
-          onSeedConsumed()
+        const res = await authFetch(apiUrl(`/api/companies/${seedLeadId}`))
+        if (!res.ok) {
+          if (!cancelled) onSeedConsumed()
+          return
         }
+        const lead = (await res.json()) as Lead
+        if (cancelled) return
+        const crmRow = await findCrmRowForLeadId(seedLeadId, toast)
+        if (cancelled) return
+        const base = crmRow ?? leadToCrmDraft(lead)
+        const merged = mergeLeadIntoCrm(base, lead)
+        setSelected(merged)
+        onSeedConsumed()
       } catch {
         if (!cancelled) onSeedConsumed()
       }
@@ -113,12 +303,88 @@ export function CrmView({ seedLeadId, onSeedConsumed, onBrowseLeads, onOpenWhats
     return () => {
       cancelled = true
     }
-  }, [seedLeadId, onSeedConsumed])
+  }, [seedLeadId, onSeedConsumed, toast])
 
-  const phone = primaryPhone(selected)
-  const digitsOk = phone ? phoneDigitsForWa(phone) : null
-  const waQuick = digitsOk ? waMeLink(digitsOk) : null
-  const emailPrimary = selected ? primaryEmail(selected) : null
+  const patchCrmStatus = async (crmId: string, crmStatus: CrmStatus) => {
+    try {
+      const res = await authFetch(apiUrl(`/api/crm/leads/${crmId}`), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ crmStatus }),
+      })
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string }
+        toast(data.error || 'Не удалось обновить статус', 'error')
+        return
+      }
+      toast(`Статус: ${crmStatusLabel(crmStatus)}`, 'success')
+      setSelected((prev) => (prev && prev.id === crmId ? { ...prev, crmStatus } : prev))
+      void loadPicker()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Не удалось обновить статус', 'error')
+    }
+  }
+
+  const [bulkOutreachRunning, setBulkOutreachRunning] = useState(false)
+  const startBulkOutreach = async () => {
+    const newLeads = pickerLeads.filter((l) => l.crmStatus === 'new' && l.companyWhatsapp)
+    if (newLeads.length === 0) {
+      toast('Нет новых лидов с WhatsApp для рассылки', 'info')
+      return
+    }
+    setBulkOutreachRunning(true)
+    let started = 0
+    let failed = 0
+    for (const lead of newLeads) {
+      try {
+        const res = await authFetch(apiUrl('/api/outreach/sequences/start'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ leadId: lead.leadId, sequenceKey: 'cold_outreach' }),
+        })
+        if (res.ok) {
+          started++
+          await authFetch(apiUrl(`/api/crm/leads/${lead.id}`), {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ crmStatus: 'contacted' }),
+          })
+        } else {
+          failed++
+        }
+      } catch {
+        failed++
+      }
+    }
+    setBulkOutreachRunning(false)
+    if (started > 0) toast(`Рассылка запущена для ${started} лидов`, 'success')
+    if (failed > 0) toast(`Не удалось для ${failed} лидов`, 'error')
+    void loadPicker()
+  }
+
+  const removeFromCrm = async (crmId: string) => {
+    try {
+      const res = await authFetch(apiUrl(`/api/crm/leads/${crmId}`), { method: 'DELETE' })
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string }
+        toast(data.error || 'Не удалось убрать из CRM', 'error')
+        return
+      }
+      toast('Убрано из CRM', 'success')
+      setSelected(null)
+      void loadPicker()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Не удалось убрать из CRM', 'error')
+    }
+  }
+
+  const phone = primaryPhoneFromCrm(selected)
+  const waDigitsFromField = selected?.companyWhatsapp?.trim()
+    ? phoneDigitsForWa(selected.companyWhatsapp)
+    : null
+  const waQuick = waDigitsFromField ? waMeLink(waDigitsFromField) : null
+  const emailPrimary = selected?.companyEmail?.trim() || null
+  const hasTenantRow = Boolean(selected?.id)
 
   return (
     <div className="animate-fade-in max-w-6xl space-y-5">
@@ -127,7 +393,7 @@ export function CrmView({ seedLeadId, onSeedConsumed, onBrowseLeads, onOpenWhats
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">CRM</p>
           <h2 className="text-xl font-semibold text-slate-100 tracking-tight mt-0.5">Клиенты и WhatsApp</h2>
           <p className="text-sm text-slate-500 mt-1 max-w-xl">
-            Список слева — как в мессенджер‑CRM: выберите компанию, справа — шаблон, ссылка wa.me и журнал.
+            Список слева — ваши заявленные лиды: выберите компанию, справа — статус, шаблон и журнал.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 justify-end">
@@ -145,6 +411,15 @@ export function CrmView({ seedLeadId, onSeedConsumed, onBrowseLeads, onOpenWhats
           ) : null}
           <button
             type="button"
+            onClick={startBulkOutreach}
+            disabled={bulkOutreachRunning || pickerLeads.filter((l) => l.crmStatus === 'new').length === 0}
+            className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-sky-500 to-cyan-500 px-4 py-2.5 text-sm font-bold text-[#020617] hover:from-sky-400 hover:to-cyan-400 shadow-lg shadow-sky-500/25 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+            {bulkOutreachRunning ? 'Запуск…' : 'Запустить рассылку'}
+          </button>
+          <button
+            type="button"
             onClick={onBrowseLeads}
             className="shrink-0 rounded-xl border border-white/[0.1] bg-slate-900/60 px-4 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/[0.04] hover:text-white transition-colors"
           >
@@ -156,17 +431,41 @@ export function CrmView({ seedLeadId, onSeedConsumed, onBrowseLeads, onOpenWhats
       <div className="flex flex-col lg:flex-row min-h-[min(72vh,640px)] rounded-2xl border border-white/[0.08] bg-slate-950/50 shadow-[0_24px_80px_-24px_rgba(0,0,0,0.7)] overflow-hidden">
         {/* Список клиентов */}
         <aside className="flex flex-col w-full lg:w-[min(100%,320px)] lg:max-w-[340px] shrink-0 border-b lg:border-b-0 lg:border-r border-white/[0.06] bg-[#070b14]/90">
-          <div className="px-4 pt-4 pb-3 border-b border-white/[0.05]">
-            <div className="flex items-center justify-between gap-2 mb-3">
-              <span className="text-xs font-semibold text-slate-400">База</span>
-              <span className="text-[10px] tabular-nums text-slate-600">{pickerLeads.length} в выборке</span>
+          <div className="px-4 pt-4 pb-3 border-b border-white/[0.05] space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-slate-400">Мои лиды</span>
+              <span className="text-[10px] tabular-nums text-slate-600">
+                {pickerLoading ? '…' : `${listTotal} в выборке`}
+                {crmStatsTotal != null ? ` · всего ${crmStatsTotal}` : ''}
+              </span>
             </div>
+
+            <div className="flex flex-wrap gap-1.5">
+              {CRM_STATUSES.map((tab) => {
+                const active = statusTab === tab.value
+                return (
+                  <button
+                    key={tab.value}
+                    type="button"
+                    onClick={() => setStatusTab(tab.value)}
+                    className={`rounded-lg px-2 py-1 text-[10px] font-medium transition-colors ${
+                      active
+                        ? 'bg-sky-500/20 text-sky-200 ring-1 ring-sky-500/30'
+                        : 'bg-slate-900/80 text-slate-500 hover:text-slate-300 ring-1 ring-white/[0.06]'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                )
+              })}
+            </div>
+
             <div className="relative">
               <input
                 type="search"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="Поиск: имя, БИН, телефон…"
+                placeholder="Поиск: имя, город, категория…"
                 className="w-full rounded-xl border border-white/[0.08] bg-slate-900/90 pl-10 pr-3 py-2.5 text-sm text-slate-200 placeholder:text-slate-600 outline-none focus:border-sky-500/35 focus:ring-1 focus:ring-sky-500/15"
               />
               <svg
@@ -197,14 +496,16 @@ export function CrmView({ seedLeadId, onSeedConsumed, onBrowseLeads, onOpenWhats
               </p>
             ) : pickerLeads.length === 0 ? (
               <p className="px-4 py-8 text-center text-xs text-slate-500 leading-relaxed">
-                Нет компаний по запросу. Добавьте лиды через 2GIS или сбросьте поиск.
+                Нет лидов в CRM по запросу. Добавьте лиды из таблицы или сбросьте фильтр.
               </p>
             ) : (
               <ul className="p-2 space-y-0.5">
                 {pickerLeads.map((l) => {
-                  const active = selected?.id === l.id
+                  const active =
+                    selected &&
+                    (selected.id ? selected.id === l.id : selected.leadId === l.leadId)
                   return (
-                    <li key={l.id}>
+                    <li key={l.id || l.leadId}>
                       <button
                         type="button"
                         onClick={() => void loadLeadDetail(l)}
@@ -215,25 +516,39 @@ export function CrmView({ seedLeadId, onSeedConsumed, onBrowseLeads, onOpenWhats
                         }`}
                       >
                         <span className="shrink-0 w-10 h-10 rounded-xl bg-gradient-to-br from-slate-700 to-slate-900 border border-white/[0.06] flex items-center justify-center text-xs font-bold text-slate-300">
-                          {initials(l.name)}
+                          {initials(l.companyName)}
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="flex items-start justify-between gap-2">
-                            <span className="text-sm font-medium text-slate-100 truncate">{l.name || '—'}</span>
+                            <span className="text-sm font-medium text-slate-100 truncate">
+                              {l.companyName || '—'}
+                            </span>
                             <span
-                              className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full font-medium ${statusPillClass(l.status)}`}
+                              className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full font-medium ${crmStatusPillClass(l.crmStatus)}`}
                             >
-                              {leadStatusLabel(l.status)}
+                              {crmStatusLabel(l.crmStatus)}
                             </span>
                           </span>
                           <span className="block text-[11px] text-slate-500 mt-0.5 truncate">
-                            {l.city || '—'} · БИН {l.bin || '—'}
+                            {l.companyCity || '—'} · {l.companyCategory || '—'}
                           </span>
                         </span>
                       </button>
                     </li>
                   )
                 })}
+                {hasMore && !pickerLoading && (
+                  <li className="pt-2 pb-1 px-1">
+                    <button
+                      type="button"
+                      onClick={() => void loadMore()}
+                      disabled={loadingMore}
+                      className="w-full rounded-xl border border-white/[0.08] bg-slate-900/60 px-3 py-2.5 text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-white/[0.04] transition-colors disabled:opacity-50"
+                    >
+                      {loadingMore ? 'Загрузка…' : 'Загрузить ещё'}
+                    </button>
+                  </li>
+                )}
               </ul>
             )}
           </div>
@@ -262,12 +577,14 @@ export function CrmView({ seedLeadId, onSeedConsumed, onBrowseLeads, onOpenWhats
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="flex items-start gap-3 min-w-0">
                     <span className="shrink-0 w-12 h-12 rounded-2xl bg-gradient-to-br from-sky-600/30 to-cyan-900/40 border border-sky-500/20 flex items-center justify-center text-sm font-bold text-sky-200">
-                      {initials(selected.name)}
+                      {initials(selected.companyName)}
                     </span>
                     <div className="min-w-0">
-                      <h3 className="text-lg font-semibold text-white truncate">{selected.name || '—'}</h3>
+                      <h3 className="text-lg font-semibold text-white truncate">
+                        {selected.companyName || '—'}
+                      </h3>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        {selected.city || '—'} · БИН {selected.bin || '—'}
+                        {selected.companyCity || '—'} · {selected.companyCategory || '—'}
                       </p>
                       {phone ? (
                         <p className="text-xs font-mono text-slate-400 mt-1 truncate" title={phone}>
@@ -286,9 +603,26 @@ export function CrmView({ seedLeadId, onSeedConsumed, onBrowseLeads, onOpenWhats
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className={`text-[11px] px-2.5 py-1 rounded-lg font-medium ${statusPillClass(selected.status)}`}>
-                      {leadStatusLabel(selected.status)}
-                    </span>
+                    {hasTenantRow ? (
+                      <select
+                        value={(selected.crmStatus || 'new').toLowerCase()}
+                        onChange={(e) => void patchCrmStatus(selected.id, e.target.value as CrmStatus)}
+                        className={`rounded-xl border border-white/[0.1] bg-slate-900/80 px-2.5 py-2 text-[11px] font-medium outline-none focus:ring-1 focus:ring-sky-500/25 ${crmStatusPillClass(selected.crmStatus)}`}
+                        aria-label="Статус CRM"
+                      >
+                        {(Object.keys(CRM_STATUS_LABEL) as CrmStatus[]).map((s) => (
+                          <option key={s} value={s}>
+                            {CRM_STATUS_LABEL[s]}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span
+                        className={`text-[11px] px-2.5 py-1 rounded-lg font-medium ${crmStatusPillClass(selected.crmStatus)}`}
+                      >
+                        {crmStatusLabel(selected.crmStatus)} (не в CRM)
+                      </span>
+                    )}
                     {waQuick ? (
                       <a
                         href={waQuick}
@@ -301,6 +635,15 @@ export function CrmView({ seedLeadId, onSeedConsumed, onBrowseLeads, onOpenWhats
                         </svg>
                         Чат
                       </a>
+                    ) : null}
+                    {hasTenantRow ? (
+                      <button
+                        type="button"
+                        onClick={() => void removeFromCrm(selected.id)}
+                        className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-300 hover:bg-rose-500/15"
+                      >
+                        Убрать из CRM
+                      </button>
                     ) : null}
                     <button
                       type="button"
@@ -320,10 +663,76 @@ export function CrmView({ seedLeadId, onSeedConsumed, onBrowseLeads, onOpenWhats
               </header>
 
               <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5">
-                <WhatsAppConnectPanel compact />
+                {selected.companyCategory ||
+                selected.companyCity ||
+                selected.companyRating ||
+                selected.companyWebsite ||
+                selected.crmStatus ? (
+                  <div className="flex flex-wrap gap-x-6 gap-y-2 px-4 py-3 rounded-xl bg-slate-900/60 border border-white/[0.06] text-xs">
+                    {selected.companyCategory && (
+                      <div>
+                        <span className="text-slate-500">Категория</span>
+                        <p className="text-slate-200 font-medium mt-0.5">{selected.companyCategory}</p>
+                      </div>
+                    )}
+                    {selected.companyCity && (
+                      <div>
+                        <span className="text-slate-500">Город</span>
+                        <p className="text-slate-200 font-medium mt-0.5">{selected.companyCity}</p>
+                      </div>
+                    )}
+                    {selected.companyRating && (
+                      <div>
+                        <span className="text-slate-500">Рейтинг 2GIS</span>
+                        <p className="text-amber-400 font-semibold mt-0.5">{selected.companyRating}</p>
+                      </div>
+                    )}
+                    {selected.companyIcpScore != null && (
+                      <div>
+                        <span className="text-slate-500">ICP</span>
+                        <p className="text-slate-200 font-medium mt-0.5">{selected.companyIcpScore}</p>
+                      </div>
+                    )}
+                    {selected.companyWebsite && (
+                      <div>
+                        <span className="text-slate-500">Сайт</span>
+                        <p className="mt-0.5">
+                          <a
+                            href={
+                              selected.companyWebsite.startsWith('http')
+                                ? selected.companyWebsite
+                                : `https://${selected.companyWebsite}`
+                            }
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-sky-400 hover:text-sky-300 underline decoration-sky-500/40"
+                          >
+                            {(() => {
+                              try {
+                                return new URL(
+                                  selected.companyWebsite.startsWith('http')
+                                    ? selected.companyWebsite
+                                    : `https://${selected.companyWebsite}`,
+                                ).hostname.replace(/^www\./, '')
+                              } catch {
+                                return selected.companyWebsite
+                              }
+                            })()}
+                          </a>
+                        </p>
+                      </div>
+                    )}
+                    {selected.crmStatus && (
+                      <div>
+                        <span className="text-slate-500">Статус CRM</span>
+                        <p className="text-slate-200 font-medium mt-0.5">{crmStatusLabel(selected.crmStatus)}</p>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
                 <OutreachCrmForm
-                  leadId={selected.id}
-                  leadEmail={primaryEmail(selected)}
+                  leadId={selected.leadId}
+                  leadEmail={emailPrimary}
                   historyMaxClass="max-h-52"
                   variant="embedded"
                 />

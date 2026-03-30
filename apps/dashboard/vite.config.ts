@@ -54,10 +54,8 @@ export default defineConfig(({ mode }) => {
   )
 
   if (mode === 'development') {
-    // eslint-disable-next-line no-console
     console.info(`[dashboard/vite] proxy /api and /health → ${apiOrigin}`)
     if (apiOrigin.includes('://localhost:5173') || apiOrigin.includes('://127.0.0.1:5173')) {
-      // eslint-disable-next-line no-console
       console.warn(
         `[dashboard/vite] LEADIYA_API_ORIGIN points at Vite’s port (${devPorts.viteDevPort}). Use the Hono API port (see dev-ports.json → localCliApiPort).`,
       )
