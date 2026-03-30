@@ -6,6 +6,8 @@ export function buildDailyDigestBody(
   seqStats: { active: number; completed: number; cold: number; positive: number },
   hotList: string,
   briefsBlock: string,
+  /** e.g. "🏢 Acme (slug)" — prepended when sending per-tenant digests */
+  tenantHeader?: string,
 ): string {
   let body = `📊 Ежедневный отчёт ${brand.productName}
 
@@ -25,6 +27,9 @@ ${hotList}`
   }
 
   body += `\n\n${brand.botSignoff}`
+  if (tenantHeader) {
+    body = `${tenantHeader}\n\n${body}`
+  }
   return body
 }
 
@@ -35,8 +40,9 @@ export function buildWeeklySummaryBody(
   seqStats: { started: number; completed: number; cold: number },
   replyRate: number,
   conversionPct: number,
+  tenantHeader?: string,
 ): string {
-  return `📊 Недельный отчёт ${brand.productName}
+  let text = `📊 Недельный отчёт ${brand.productName}
 
 📦 Лидов всего: ${leadStats.total} (+${leadStats.thisWeek} за неделю)
 📤 Отправлено сообщений: ${stats.sent}
@@ -50,6 +56,10 @@ export function buildWeeklySummaryBody(
 Конверсия: ${conversionPct}% → встреча/сделка
 
 ${brand.botSignoff}`
+  if (tenantHeader) {
+    text = `${tenantHeader}\n\n${text}`
+  }
+  return text
 }
 
 export const hotLeadsQuietLine = 'Пока тихо — продолжаем работать!'

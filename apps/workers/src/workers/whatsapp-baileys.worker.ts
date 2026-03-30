@@ -1,10 +1,9 @@
-import { Worker } from 'bullmq'
+import { Worker, type Job } from 'bullmq'
 import { env } from '@leadiya/config'
 import { QueueName, type WhatsAppOutreachJobData } from '@leadiya/queue'
 import {
   waRedis,
   sendMessage,
-  ensureConnected,
   initLegacyConnection,
   setInboundHandler,
 } from '../lib/whatsapp-pool.js'
@@ -14,19 +13,35 @@ setInboundHandler(handleInboundReply)
 
 initLegacyConnection()
 
-function currentHourInTz(tz: string): number {
+const BH_TZ = process.env.WHATSAPP_BUSINESS_HOURS_TZ ?? 'Asia/Almaty'
+const BH_START = Number(process.env.WHATSAPP_BUSINESS_HOURS_START ?? '9')
+const BH_END = Number(process.env.WHATSAPP_BUSINESS_HOURS_END ?? '19')
+
+function hourInTz(date: Date, tz: string): number {
   try {
-    const s = new Date().toLocaleString('en-US', { timeZone: tz, hour: 'numeric', hour12: false })
+    const s = date.toLocaleString('en-US', { timeZone: tz, hour: 'numeric', hour12: false })
     return parseInt(s, 10)
   } catch {
-    return new Date().getHours()
+    return date.getHours()
   }
+}
+
+/** Next time (within ~36h) when local hour is in [startH, endH). */
+function msUntilBusinessWindow(tz: string, startH: number, endH: number): number {
+  const stepMs = 60_000
+  const maxMs = 36 * 3600 * 1000
+  for (let ms = 0; ms <= maxMs; ms += stepMs) {
+    const d = new Date(Date.now() + ms)
+    const h = hourInTz(d, tz)
+    if (h >= startH && h < endH) return ms
+  }
+  return 3600_000
 }
 
 const whatsappWorker = new Worker<WhatsAppOutreachJobData>(
   QueueName.WHATSAPP_OUTREACH,
-  async (job) => {
-    const { leadId, phoneDigits, body, tenantId } = job.data as WhatsAppOutreachJobData & { tenantId?: string }
+  async (job: Job<WhatsAppOutreachJobData>) => {
+    const { leadId, phoneDigits, body, tenantId } = job.data
     const jid = `${phoneDigits}@s.whatsapp.net`
 
     const effectiveTenantId = tenantId || process.env.DEFAULT_TENANT_ID
@@ -34,13 +49,14 @@ const whatsappWorker = new Worker<WhatsAppOutreachJobData>(
       throw new Error('No tenantId in job data and no DEFAULT_TENANT_ID configured')
     }
 
-    const hour = currentHourInTz('Asia/Almaty')
-    if (hour < 9 || hour >= 19) {
-      const hoursUntil = hour < 9 ? (9 - hour) : (24 - hour + 9)
-      const delayMs = hoursUntil * 3_600_000 + (60 - new Date().getMinutes()) * 60_000
-      console.log(`[whatsapp] Outside business hours (${hour}h) — re-queuing with ${Math.round(delayMs / 60000)}min delay`)
-      await whatsappWorker.rateLimit(delayMs)
-      throw Worker.RateLimitError()
+    const hour = hourInTz(new Date(), BH_TZ)
+    if (hour < BH_START || hour >= BH_END) {
+      const delayMs = msUntilBusinessWindow(BH_TZ, BH_START, BH_END)
+      console.log(
+        `[whatsapp] Outside business hours (${hour}h, window ${BH_START}–${BH_END} ${BH_TZ}) — moveToDelayed ${Math.round(delayMs / 60000)}min`,
+      )
+      await job.moveToDelayed(Date.now() + delayMs)
+      return { deferred: 'business_hours' as const, delayMs }
     }
 
     const hourKey = `wa:rate:h:${effectiveTenantId}:${new Date().toISOString().slice(0, 13)}`
@@ -54,12 +70,18 @@ const whatsappWorker = new Worker<WhatsAppOutreachJobData>(
     if (hourCount > 10) {
       await waRedis.decr(hourKey)
       await waRedis.decr(dayKey)
-      throw new Error('WHATSAPP_RATE_LIMIT_HOUR')
+      const delayMs = 3600_000
+      console.log('[whatsapp] Hour rate limit — moveToDelayed 60m')
+      await job.moveToDelayed(Date.now() + delayMs)
+      return { deferred: 'hour_rate' as const }
     }
     if (dayCount > 30) {
       await waRedis.decr(hourKey)
       await waRedis.decr(dayKey)
-      throw new Error('WHATSAPP_RATE_LIMIT_DAY')
+      const delayMs = 24 * 3600_000
+      console.log('[whatsapp] Day rate limit — moveToDelayed 24h')
+      await job.moveToDelayed(Date.now() + delayMs)
+      return { deferred: 'day_rate' as const }
     }
 
     const lastTs = await waRedis.get(`wa:outreach:last_ts:${effectiveTenantId}`)
