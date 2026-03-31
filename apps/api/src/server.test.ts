@@ -62,6 +62,14 @@ const ctx = vi.hoisted(() => {
     delete: vi.fn(() => ({
       where: vi.fn(() => Promise.resolve([])),
     })),
+    transaction: vi.fn(async (fn: (tx: Record<string, unknown>) => Promise<unknown>) => {
+      const tx = {
+        execute: vi.fn().mockResolvedValue(undefined),
+        select: db.select,
+        insert: db.insert,
+      }
+      return fn(tx)
+    }),
   }
 
   const inArray = vi.fn(() => ({ __tag: 'inArray' as const }))

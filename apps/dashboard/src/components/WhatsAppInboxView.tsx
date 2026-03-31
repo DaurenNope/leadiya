@@ -103,6 +103,66 @@ function dedupeMergeMessages(a: WaLogRow[], b: WaLogRow[]): WaLogRow[] {
  * Same contact often appears twice: rows with lead_id vs rows matched only by JID (@lid ≠ @s.whatsapp.net).
  * Merge digit-only threads into lead threads when phone (last 10) matches any message wa_peer in that lead.
  */
+/**
+ * Merge sidebar rows that share the same phone (last 10 digits) but different lead_id / JID forms
+ * (e.g. two CRM leads for one number, or l:… vs d:… buckets).
+ */
+function mergeConversationsByPhoneDigits(conversations: Conversation[]): Conversation[] {
+  const byLast10 = new Map<string, Conversation[]>()
+  const orphans: Conversation[] = []
+
+  for (const c of conversations) {
+    const last10 = extractPhone(c.peer).slice(-10)
+    if (last10.length === 10) {
+      const arr = byLast10.get(last10) ?? []
+      arr.push(c)
+      byLast10.set(last10, arr)
+    } else {
+      orphans.push(c)
+    }
+  }
+
+  const merged: Conversation[] = []
+  for (const [, group] of byLast10) {
+    if (group.length === 1) {
+      merged.push(group[0]!)
+      continue
+    }
+    let acc = group[0]!
+    for (let i = 1; i < group.length; i++) {
+      acc = mergeTwoConversations(acc, group[i]!)
+    }
+    merged.push(acc)
+  }
+
+  return [...merged, ...orphans].sort(
+    (a, b) => new Date(b.lastMessage.createdAt).getTime() - new Date(a.lastMessage.createdAt).getTime(),
+  )
+}
+
+function mergeTwoConversations(a: Conversation, b: Conversation): Conversation {
+  const messages = dedupeMergeMessages(a.messages, b.messages)
+  let leadId = pickPreferredLeadId(a, b)
+  const fromRows = [...messages].reverse().find((m) => m.leadId)?.leadId ?? null
+  if (!leadId && fromRows) leadId = fromRows
+  const leadName = a.leadName ?? b.leadName
+  const leadCity = a.leadCity ?? b.leadCity
+  const peer = pickBestWaPeer(messages)
+  const lastMessage = messages[messages.length - 1]!
+  const lastOutIdx = messages.findLastIndex((m) => m.direction === 'outbound')
+  const hasUnread = messages.some((m, i) => m.direction === 'inbound' && i > lastOutIdx)
+  const threadKey = leadId ? `l:${leadId}` : rowThreadKey(lastMessage)
+  return { threadKey, peer, leadId, leadName, leadCity, messages, lastMessage, hasUnread }
+}
+
+function pickPreferredLeadId(a: Conversation, b: Conversation): string | null {
+  if (a.leadId && !b.leadId) return a.leadId
+  if (!a.leadId && b.leadId) return b.leadId
+  if (a.leadName && !b.leadName) return a.leadId
+  if (!a.leadName && b.leadName) return b.leadId
+  return a.leadId ?? b.leadId
+}
+
 function mergeLeadAndDigitThreads(conversations: Conversation[]): Conversation[] {
   const byLead = new Map<string, Conversation>()
   const digitOnly: Conversation[] = []
@@ -177,7 +237,7 @@ function groupByConversation(items: WaLogRow[]): Conversation[] {
     const peer = pickBestWaPeer(sorted)
     return { threadKey, peer, leadId, leadName, leadCity, messages: sorted, lastMessage, hasUnread }
   })
-  return mergeLeadAndDigitThreads(conversations)
+  return mergeConversationsByPhoneDigits(mergeLeadAndDigitThreads(conversations))
 }
 
 const WA_STATUS_POLL_MS = 10_000
@@ -196,10 +256,12 @@ export function WhatsAppInboxView({
   const [warning, setWarning] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [waStatus, setWaStatus] = useState<WaStatus | null>(null)
-  const [activePeer, setActivePeer] = useState<string | null>(null)
+  /** Stable id for sidebar + selection (peer JID can change after merge). */
+  const [activeThreadKey, setActiveThreadKey] = useState<string | null>(null)
+  const selectedPhoneSuffixRef = useRef<string | null>(null)
   const [replyText, setReplyText] = useState('')
   const [sending, setSending] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesScrollRef = useRef<HTMLDivElement>(null)
   const [mobileShowThread, setMobileShowThread] = useState(false)
   /** Full message list for the open thread (GET /log?waPeer=…); global feed alone truncates each chat. */
   const [threadMessages, setThreadMessages] = useState<WaLogRow[] | null>(null)
@@ -235,8 +297,22 @@ export function WhatsAppInboxView({
   }, [])
 
   const conversations = groupByConversation(items)
-  const activeConvo = activePeer ? conversations.find((c) => c.peer === activePeer) ?? null : null
+  const activeConvo = activeThreadKey
+    ? conversations.find((c) => c.threadKey === activeThreadKey) ?? null
+    : null
   const activeLeadId = activeConvo?.leadId ?? null
+  const activePeer = activeConvo?.peer ?? null
+
+  /** After poll/merge, threadKey can change — keep selection on same phone. */
+  useEffect(() => {
+    if (!activeThreadKey) return
+    if (conversations.some((c) => c.threadKey === activeThreadKey)) return
+    const suffix = selectedPhoneSuffixRef.current
+    if (suffix && suffix.length === 10) {
+      const next = conversations.find((c) => extractPhone(c.peer).slice(-10) === suffix)
+      if (next) setActiveThreadKey(next.threadKey)
+    }
+  }, [conversations, activeThreadKey])
 
   const fetchWaStatus = useCallback(async () => {
     try {
@@ -289,7 +365,7 @@ export function WhatsAppInboxView({
     return () => {
       cancelled = true
     }
-  }, [activePeer, activeLeadId, items])
+  }, [activePeer, activeLeadId, activeThreadKey])
 
   useEffect(() => {
     void fetchWaStatus()
@@ -314,21 +390,29 @@ export function WhatsAppInboxView({
     const { leadId, phoneDigits } = focusRequest
     const norm = (phoneDigits ?? '').replace(/\D/g, '')
     let peer: string | null = null
+    let threadKey: string | null = null
     if (conversations.length > 0) {
       if (leadId) {
         const byLead = conversations.find((c) => c.leadId === leadId)
-        if (byLead) peer = byLead.peer
+        if (byLead) {
+          threadKey = byLead.threadKey
+          peer = byLead.peer
+        }
       }
-      if (!peer && norm.length >= 10) {
+      if (!threadKey && norm.length >= 10) {
         const byPhone = conversations.find((c) => {
           const d = extractPhone(c.peer)
           return d === norm || d.endsWith(norm.slice(-10)) || norm.endsWith(d.slice(-10))
         })
-        if (byPhone) peer = byPhone.peer
+        if (byPhone) {
+          threadKey = byPhone.threadKey
+          peer = byPhone.peer
+        }
       }
     }
-    if (peer) {
-      setActivePeer(peer)
+    if (threadKey && peer) {
+      setActiveThreadKey(threadKey)
+      selectedPhoneSuffixRef.current = extractPhone(peer).slice(-10)
       setMobileShowThread(true)
     } else {
       toast(
@@ -339,11 +423,12 @@ export function WhatsAppInboxView({
     onFocusConsumed?.()
   }, [focusRequest, loading, conversations, toast, onFocusConsumed])
 
-  /** Scroll only when switching threads — not on every 12s poll (smooth scroll was fighting nested scroll + felt “stuck”). */
+  /** Scroll inside the thread panel only (avoid scrollIntoView moving the whole page / sticky header). */
   useEffect(() => {
-    if (!activePeer) return
-    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
-  }, [activePeer])
+    const el = messagesScrollRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [activeThreadKey, threadMessages])
 
   const sendReply = useCallback(async () => {
     if (!activeConvo) return
@@ -362,7 +447,10 @@ export function WhatsAppInboxView({
       toast('Сообщение отправлено', 'success')
       setReplyText('')
       await load({ silent: true })
-      requestAnimationFrame(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }))
+      requestAnimationFrame(() => {
+        const el = messagesScrollRef.current
+        if (el) el.scrollTop = el.scrollHeight
+      })
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Не удалось отправить', 'error')
     } finally {
@@ -370,8 +458,9 @@ export function WhatsAppInboxView({
     }
   }, [activeConvo, replyText, sending, load, toast])
 
-  const selectConvo = (peer: string) => {
-    setActivePeer(peer)
+  const selectConvo = (convo: Conversation) => {
+    setActiveThreadKey(convo.threadKey)
+    selectedPhoneSuffixRef.current = extractPhone(convo.peer).slice(-10)
     setMobileShowThread(true)
   }
 
@@ -384,7 +473,7 @@ export function WhatsAppInboxView({
         : { dot: 'bg-red-400', label: 'Отключено', border: 'border-red-500/30 text-red-200/90' }
 
   return (
-    <div className="animate-fade-in max-w-7xl space-y-5 flex flex-col min-h-0 max-h-[calc(100dvh-7rem)]">
+    <div className="animate-fade-in max-w-7xl space-y-5 flex flex-col min-h-0 max-h-[calc(100dvh-7rem)] overflow-hidden">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -466,7 +555,7 @@ export function WhatsAppInboxView({
             ) : (
               <ul>
                 {conversations.map((convo) => {
-                  const isActive = convo.peer === activePeer
+                  const isActive = convo.threadKey === activeThreadKey
                   const displayName = convo.leadName || extractPhone(convo.peer)
                   const lastBody = convo.lastMessage.body
                   const isLastInbound = convo.lastMessage.direction === 'inbound'
@@ -474,7 +563,7 @@ export function WhatsAppInboxView({
                     <li key={convo.threadKey}>
                       <button
                         type="button"
-                        onClick={() => selectConvo(convo.peer)}
+                        onClick={() => selectConvo(convo)}
                         className={`w-full text-left px-4 py-3 flex items-start gap-3 transition-colors ${
                           isActive
                             ? 'bg-sky-500/12 ring-1 ring-inset ring-sky-500/25'
@@ -561,7 +650,10 @@ export function WhatsAppInboxView({
               </div>
 
               {/* Messages — threadMessages from GET /log?waPeer=… (full history); sidebar feed alone capped globally */}
-              <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain px-4 py-4 sm:px-6 [scrollbar-gutter:stable]">
+              <div
+                ref={messagesScrollRef}
+                className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain px-4 py-4 sm:px-6 [scrollbar-gutter:stable]"
+              >
                 {threadLoading && threadMessages === null ? (
                   <p className="text-center text-sm text-slate-500 py-12">Загрузка переписки…</p>
                 ) : (
@@ -602,7 +694,6 @@ export function WhatsAppInboxView({
                         )
                       })}
                     </ul>
-                    <div ref={messagesEndRef} />
                   </>
                 )}
               </div>

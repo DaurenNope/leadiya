@@ -6,6 +6,11 @@ import type { AppEnv } from '../types.js'
 
 const settingsRouter = new Hono<AppEnv>()
 
+function requireTenant(c: { get: (k: 'tenant') => { id: string } | undefined }): string | null {
+  const tenant = c.get('tenant')
+  return tenant?.id ?? null
+}
+
 function configPath(file: string): string {
   return join(process.cwd(), 'config', file)
 }
@@ -16,6 +21,17 @@ function readYaml(file: string): Record<string, unknown> {
 
 function writeYaml(file: string, data: Record<string, unknown>): void {
   writeFileSync(configPath(file), stringifyYaml(data, { indent: 2 }), 'utf8')
+}
+
+const COMPANY_ALLOWED = new Set(['name', 'calendar_url', 'website', 'industry', 'description', 'logo_url'])
+const AUTOMATION_ALLOWED = new Set(['warmup_enabled', 'daily_limit', 'business_hours_start', 'business_hours_end', 'business_hours_tz', 'typing_simulation', 'auto_reply_enabled', 'auto_reply_low_confidence'])
+
+function pickAllowed(obj: Record<string, unknown>, allowed: Set<string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(obj)) {
+    if (allowed.has(k)) out[k] = v
+  }
+  return out
 }
 
 // GET /api/settings/automation
@@ -30,10 +46,12 @@ settingsRouter.get('/automation', (c) => {
 
 // PUT /api/settings/automation
 settingsRouter.put('/automation', async (c) => {
+  if (!requireTenant(c)) return c.json({ error: 'Tenant required' }, 403)
   try {
     const body = await c.req.json()
     const doc = readYaml('business.yml')
-    doc.automation = { ...(doc.automation as Record<string, unknown> ?? {}), ...body }
+    const filtered = pickAllowed(body as Record<string, unknown>, AUTOMATION_ALLOWED)
+    doc.automation = { ...(doc.automation as Record<string, unknown> ?? {}), ...filtered }
     writeYaml('business.yml', doc)
     return c.json({ ok: true, automation: doc.automation })
   } catch (e) {
@@ -57,6 +75,7 @@ settingsRouter.get('/discovery', (c) => {
 
 // PUT /api/settings/discovery
 settingsRouter.put('/discovery', async (c) => {
+  if (!requireTenant(c)) return c.json({ error: 'Tenant required' }, 403)
   try {
     const body = await c.req.json() as { cities?: string[]; categories?: string[] }
     const doc = readYaml('business.yml')
@@ -83,10 +102,12 @@ settingsRouter.get('/company', (c) => {
 
 // PUT /api/settings/company
 settingsRouter.put('/company', async (c) => {
+  if (!requireTenant(c)) return c.json({ error: 'Tenant required' }, 403)
   try {
     const body = await c.req.json()
     const doc = readYaml('business.yml')
-    doc.company = { ...(doc.company as Record<string, unknown> ?? {}), ...body }
+    const filtered = pickAllowed(body as Record<string, unknown>, COMPANY_ALLOWED)
+    doc.company = { ...(doc.company as Record<string, unknown> ?? {}), ...filtered }
     writeYaml('business.yml', doc)
     return c.json({ ok: true, company: doc.company })
   } catch (e) {
@@ -106,6 +127,7 @@ settingsRouter.get('/sequences', (c) => {
 
 // PUT /api/settings/sequences/:key
 settingsRouter.put('/sequences/:key', async (c) => {
+  if (!requireTenant(c)) return c.json({ error: 'Tenant required' }, 403)
   try {
     const key = c.req.param('key')
     const body = await c.req.json()
@@ -113,7 +135,8 @@ settingsRouter.put('/sequences/:key', async (c) => {
     if (!doc[key]) {
       return c.json({ error: `Sequence '${key}' not found` }, 404)
     }
-    doc[key] = { ...(doc[key] as Record<string, unknown>), ...body }
+    const allowed = pickAllowed(body as Record<string, unknown>, new Set(['steps', 'cooldown']))
+    doc[key] = { ...(doc[key] as Record<string, unknown>), ...allowed }
     writeYaml('sequences.yml', doc)
     return c.json({ ok: true, sequence: doc[key] })
   } catch (e) {

@@ -141,24 +141,33 @@ scrapersRouter.post('/2gis', async (c) => {
     skipProxy,
   } = result.data
 
-  const [existing] = await db
-    .select({ id: scraperRuns.id })
-    .from(scraperRuns)
-    .where(and(eq(scraperRuns.scraper, '2gis'), eq(scraperRuns.status, 'running')))
-    .orderBy(desc(scraperRuns.startedAt))
-    .limit(1)
-
-  if (existing) {
-    return c.json({ runId: existing.id, message: 'Scraper already running', existing: true }, 202)
-  }
-
   const totalSlices = cities.length * categories.length
-  const [row] = await db
-    .insert(scraperRuns)
-    .values({ scraper: '2gis', status: 'running', lastProgressAt: new Date(), totalSlices })
-    .returning({ id: scraperRuns.id })
 
-  const runId = row.id
+  let isNewRun = false
+  const runId = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(84201)`)
+
+    const [existing] = await tx
+      .select({ id: scraperRuns.id })
+      .from(scraperRuns)
+      .where(and(eq(scraperRuns.scraper, '2gis'), eq(scraperRuns.status, 'running')))
+      .orderBy(desc(scraperRuns.startedAt))
+      .limit(1)
+
+    if (existing) return existing.id
+
+    const [row] = await tx
+      .insert(scraperRuns)
+      .values({ scraper: '2gis', status: 'running', lastProgressAt: new Date(), totalSlices })
+      .returning({ id: scraperRuns.id })
+
+    isNewRun = true
+    return row.id
+  })
+
+  if (!isNewRun) {
+    return c.json({ runId, message: 'Scraper already running', existing: true }, 202)
+  }
 
   run2GisScraper({
     cities,

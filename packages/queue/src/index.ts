@@ -47,6 +47,11 @@ export interface WhatsAppOutreachJobData {
     stepIndex?: number;
     /** Tenant whose WhatsApp session should be used for sending. */
     tenantId?: string;
+    /**
+     * Operator pings (FOUNDER_WHATSAPP). Logged with status internal_alert — excluded from
+     * auto-reply caps and hidden from default CRM thread views.
+     */
+    outreachLogStatus?: 'internal_alert';
 }
 
 export interface EmailOutreachJobData {

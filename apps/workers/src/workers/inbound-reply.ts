@@ -1,4 +1,4 @@
-import { db, leads, outreachLog, leadSequenceState, eq, sql, and, desc } from '@leadiya/db'
+import { db, leads, outreachLog, leadSequenceState, eq, sql, and, desc, or, isNull, ne } from '@leadiya/db'
 import {
   whatsappOutreachQueue,
   type WhatsAppOutreachJobData,
@@ -7,9 +7,9 @@ import { classifyReply, type ClassifyResult } from '../lib/intent-classifier.js'
 import { generateResponse, extractQualificationFromMessage, type ResponseContext } from '../lib/auto-responder.js'
 import { processReferral } from '../lib/contact-extractor.js'
 import { getAutomationLimits } from '../lib/worker-business-config.js'
+import { maxInboundAutoReplies } from '../lib/inbound-auto-reply-limits.js'
 
 const DEFAULT_TENANT_ENV = process.env.DEFAULT_TENANT_ID?.trim() || null
-const MAX_AUTO_REPLIES = 5
 const AUTO_REPLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
 /** When false (default), low-confidence classification does not auto-queue a reply — founder alert only (HITL). */
@@ -38,6 +38,8 @@ async function countRecentAutoReplies(leadId: string): Promise<number> {
         eq(outreachLog.channel, 'whatsapp'),
         eq(outreachLog.direction, 'outbound'),
         sql`${outreachLog.createdAt} >= ${since}`,
+        /** Founder/operator pings must not count toward customer auto-reply cap */
+        or(isNull(outreachLog.status), ne(outreachLog.status, 'internal_alert')),
       ),
     )
   return rows[0]?.count ?? 0
@@ -134,10 +136,11 @@ async function tryInboundReplyWithoutActiveSequence(
     )
   }
 
+  const cap = maxInboundAutoReplies()
   const autoReplyCount = await countRecentAutoReplies(leadId)
-  if (autoReplyCount >= MAX_AUTO_REPLIES) {
+  if (autoReplyCount >= cap) {
     await sendFounderAlert(leadId, 'max_turns', messageBody, resolveTenantId(tenantId))
-    console.log(`[inbound-reply] Max auto-replies (${MAX_AUTO_REPLIES}) reached for ${leadId} — escalating to human`)
+    console.log(`[inbound-reply] Max auto-replies (${cap}) reached for ${leadId} — escalating to human`)
     return
   }
 
@@ -290,10 +293,11 @@ export async function handleInboundReply(
     .limit(1)
   if (!lead) return
 
+  const cap = maxInboundAutoReplies()
   const autoReplyCount = await countRecentAutoReplies(leadId)
-  if (autoReplyCount >= MAX_AUTO_REPLIES) {
+  if (autoReplyCount >= cap) {
     await sendFounderAlert(leadId, 'max_turns', messageBody, resolveTenantId(tenantId ?? state.tenantId))
-    console.log(`[inbound-reply] Max auto-replies (${MAX_AUTO_REPLIES}) reached for ${leadId} — escalating to human`)
+    console.log(`[inbound-reply] Max auto-replies (${cap}) reached for ${leadId} — escalating to human`)
     return
   }
 
@@ -335,7 +339,7 @@ export async function handleInboundReply(
   }
 
   if (['positive', 'pricing', 'qualification'].includes(effectiveIntent)) {
-    await sendFounderAlert(leadId, effectiveIntent, messageBody, state.tenantId)
+    await sendFounderAlert(leadId, effectiveIntent, messageBody, resolveTenantId(tenantId ?? state.tenantId))
   }
 }
 

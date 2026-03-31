@@ -40,7 +40,7 @@ function msUntilBusinessWindow(tz: string, startH: number, endH: number): number
 const whatsappWorker = new Worker<WhatsAppOutreachJobData>(
   QueueName.WHATSAPP_OUTREACH,
   async (job: Job<WhatsAppOutreachJobData>) => {
-    const { leadId, phoneDigits, body, tenantId } = job.data
+    const { leadId, phoneDigits, body, tenantId, outreachLogStatus } = job.data
     const jid = `${phoneDigits}@s.whatsapp.net`
 
     const effectiveTenantId = tenantId || process.env.DEFAULT_TENANT_ID
@@ -92,7 +92,9 @@ const whatsappWorker = new Worker<WhatsAppOutreachJobData>(
       }
     }
 
-    await sendMessage(effectiveTenantId, jid, body, leadId)
+    await sendMessage(effectiveTenantId, jid, body, leadId, {
+      logStatus: outreachLogStatus,
+    })
     await waRedis.set(`wa:outreach:last_ts:${effectiveTenantId}`, String(Date.now()))
 
     return { ok: true, jid }

@@ -10,6 +10,7 @@
  *   npx tsx --env-file=.env scripts/simulate-wa-convo.ts
  *   npx tsx --env-file=.env scripts/simulate-wa-convo.ts --message="Да, интересно!"
  *   SKIP_SEND=1 npx tsx --env-file=.env scripts/simulate-wa-convo.ts   # only fake inbound (needs prior outbound)
+ *   OUTREACH_MAX_INBOUND_AUTO_REPLIES=100 …  # if lead hit 7d outbound cap (default 5), raise for testing
  */
 import { readFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -103,8 +104,9 @@ async function main() {
   console.log(`2) Simulated inbound from B → ${waPeer.slice(0, 18)}…`)
   console.log(`   Text: "${inboundMessage.slice(0, 120)}${inboundMessage.length > 120 ? '…' : ''}"\n`)
 
+  const tenantId = process.env.DEFAULT_TENANT_ID?.trim() || undefined
   const { handleInboundReply } = await import('../apps/workers/src/workers/inbound-reply.js')
-  await handleInboundReply(leadId, waPeer, inboundMessage)
+  await handleInboundReply(leadId, waPeer, inboundMessage, tenantId)
 
   console.log('\n3) Done. If workers are running, check:')
   console.log('   • Worker log: [inbound-reply] Queued …')

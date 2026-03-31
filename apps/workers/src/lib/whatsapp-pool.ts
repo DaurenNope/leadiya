@@ -430,6 +430,7 @@ export async function sendMessage(
   jid: string,
   body: string,
   leadId?: string | null,
+  opts?: { logStatus?: string },
 ): Promise<void> {
   const sock = await ensureConnected(tenantId)
 
@@ -465,13 +466,15 @@ export async function sendMessage(
   await sock.sendMessage(jid, { text: trimmed })
 
   try {
+    const logStatus = opts?.logStatus ?? 'sent'
     await db.insert(outreachLog).values({
       tenantId,
-      leadId: leadId ?? null,
+      /** Internal pings to operator phone — omit lead to avoid polluting customer CRM thread. */
+      leadId: logStatus === 'internal_alert' ? null : leadId ?? null,
       channel: 'whatsapp',
       direction: 'outbound',
       body: trimmed,
-      status: 'sent',
+      status: logStatus,
       sentAt: new Date(),
       waPeer: jid,
     })
