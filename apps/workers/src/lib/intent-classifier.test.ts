@@ -23,4 +23,9 @@ describe('classifyReply', () => {
       confidence: 'high',
     })
   })
+
+  it('classifies skeptical зачем as question (keyword)', async () => {
+    await expect(classifyReply('Зачем?')).resolves.toMatchObject({ intent: 'question', confidence: 'high' })
+    await expect(classifyReply('зачем вы пишете')).resolves.toMatchObject({ intent: 'question', confidence: 'high' })
+  })
 })

@@ -47,6 +47,8 @@ export const leads = pgTable('leads', {
   lastScrapedAt: timestamp('last_scraped_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  /** Block new outreach sequences until this time (cooldown after max follow-ups or stop). */
+  nextOutreachEligibleAt: timestamp('next_outreach_eligible_at'),
 })
 
 export const companies = leads; // Alias for backward compatibility

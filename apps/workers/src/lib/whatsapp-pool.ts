@@ -10,7 +10,7 @@ import makeWASocket, {
   type WASocket,
 } from '@whiskeysockets/baileys'
 import { env, isWhatsappInboundLogEnabled } from '@leadiya/config'
-import { db, outreachLog, contacts, leads, eq, sql, and, gte } from '@leadiya/db'
+import { db, outreachLog, contacts, leads, tenantLeads, eq, sql, and, gte } from '@leadiya/db'
 
 const BASE_AUTH_DIR =
   env.WHATSAPP_BAILEYS_AUTH_DIR?.trim() || resolve(process.cwd(), 'data/baileys-auth')
@@ -152,9 +152,54 @@ async function findLeadByJid(jid: string): Promise<string | null> {
   return null
 }
 
-let handleInboundReplyFn: ((leadId: string | null, jid: string, text: string) => Promise<void>) | null = null
+/** First contact from unknown WA number: create lead + tenant link + primary contact phone. */
+async function createLeadFromInboundJid(tenantId: string, jid: string): Promise<string | null> {
+  const raw = jid.replace(/@.*$/, '').replace(/\D/g, '')
+  if (raw.length < 10) return null
+  const phoneDisplay = raw.length === 11 && raw.startsWith('7') ? `+${raw}` : raw.startsWith('+') ? raw : `+${raw}`
 
-export function setInboundHandler(fn: (leadId: string | null, jid: string, text: string) => Promise<void>) {
+  try {
+    const [row] = await db
+      .insert(leads)
+      .values({
+        name: 'WhatsApp',
+        whatsapp: phoneDisplay,
+        source: 'whatsapp_inbound',
+        status: 'pending',
+      })
+      .returning({ id: leads.id })
+    if (!row?.id) return null
+
+    await db.insert(tenantLeads).values({
+      tenantId,
+      leadId: row.id,
+      crmStatus: 'new',
+    })
+
+    await db
+      .insert(contacts)
+      .values({
+        tenantId,
+        leadId: row.id,
+        phone: phoneDisplay,
+        source: 'whatsapp_inbound',
+        isPrimary: true,
+      })
+      .onConflictDoNothing()
+
+    console.log(`[wa-pool] Created lead ${row.id} from inbound ${jid.slice(0, 24)}… (tenant ${tenantId.slice(0, 8)})`)
+    return row.id
+  } catch (e) {
+    console.warn('[wa-pool] createLeadFromInboundJid failed:', e instanceof Error ? e.message : e)
+    return null
+  }
+}
+
+let handleInboundReplyFn: ((leadId: string | null, jid: string, text: string, tenantId?: string | null) => Promise<void>) | null = null
+
+export function setInboundHandler(
+  fn: (leadId: string | null, jid: string, text: string, tenantId?: string | null) => Promise<void>,
+) {
   handleInboundReplyFn = fn
 }
 
@@ -250,11 +295,24 @@ async function connectTenant(tenantId: string): Promise<TenantConnection> {
         if (!jid.endsWith('@s.whatsapp.net') && !jid.endsWith('@lid')) continue
         const text = textFromUpsertMessage(m).trim()
         if (!text) continue
+
+        const msgId = m.key?.id
+        if (msgId) {
+          const isNew = await redis.set(`wa:inbound_dedup:${msgId}`, '1', 'EX', 300, 'NX')
+          if (!isNew) {
+            console.log(`[wa-pool] Duplicate inbound ${msgId} — skipping`)
+            continue
+          }
+        }
+
         try {
-          const leadId = await findLeadByJid(jid)
+          let leadId = await findLeadByJid(jid)
           if (!leadId) {
-            console.log(`[wa-pool] Inbound from ${jid} — no matching lead found, skipping reply`)
-            return
+            leadId = (await createLeadFromInboundJid(tenantId, jid)) ?? null
+            if (!leadId) {
+              console.log(`[wa-pool] Inbound from ${jid} — could not create or match lead`)
+              continue
+            }
           }
           if (isWhatsappInboundLogEnabled()) {
             await db.insert(outreachLog).values({
@@ -268,7 +326,7 @@ async function connectTenant(tenantId: string): Promise<TenantConnection> {
             })
           }
           if (handleInboundReplyFn) {
-            handleInboundReplyFn(leadId, jid, text).catch((err) =>
+            handleInboundReplyFn(leadId, jid, text, tenantId).catch((err) =>
               console.error('[wa-pool] handleInboundReply error:', err instanceof Error ? err.message : err),
             )
           }

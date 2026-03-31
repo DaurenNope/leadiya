@@ -54,6 +54,7 @@ automation:
   max_outreach_per_hour: 10
   delay_between_messages_ms: 45000
   max_followups_per_lead: 3
+  sequence_cooldown: 30d
   cooldown_after_response: true
 discovery:
   schedule: 0 */6 * * *

@@ -72,6 +72,8 @@ automation:
   delay_min_ms: 35000
   delay_max_ms: 90000
   max_followups_per_lead: 3
+  # Default cooldown after sequence completes or max follow-ups (also used if sequence YAML has no `cooldown:`)
+  sequence_cooldown: 30d
   cooldown_after_response: true
   typing_simulation: true
 

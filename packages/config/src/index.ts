@@ -47,6 +47,9 @@ const schema = z.object({
   STRIPE_SECRET_KEY: z.string().startsWith('sk_').optional(),
   STRIPE_WEBHOOK_SECRET: z.string().startsWith('whsec_').optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
+  /** Hosted chat model for inbound replies (workers auto-responder). Prefer over Ollama in production. */
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_CHAT_MODEL: z.string().optional(),
   OLLAMA_URL: z.string().url().optional(),
   SMARTPROXY_USER: z.string().optional(),
   SMARTPROXY_PASS: z.string().optional(),

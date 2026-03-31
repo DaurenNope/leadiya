@@ -122,6 +122,8 @@ ${sig}` }
 
     case 'question':
     case 'unknown': {
+      const openai = await generateOpenAiResponse(ctx)
+      if (openai) return openai
       const ollama = await generateOllamaResponse(ctx)
       if (ollama) return ollama
       const fallbackSig = biz.voice?.signature || '— Команда Rahmet Labs'
@@ -197,6 +199,65 @@ ${sig}` }
 ${sig}` }
 }
 
+async function generateOpenAiResponse(ctx: ResponseContext): Promise<{ body: string; channel: 'whatsapp' } | null> {
+  const key = env.OPENAI_API_KEY?.trim()
+  if (!key) return null
+  const model = env.OPENAI_CHAT_MODEL?.trim() || 'gpt-4o-mini'
+  const biz = loadBusiness()
+  const services =
+    biz.product?.services?.map((s) => `${s.name}: ${s.description}`).join('\n') ||
+    'digital services for business'
+  const history = ctx.conversationHistory?.length
+    ? '\nRecent thread:\n' + ctx.conversationHistory.slice(-6).join('\n')
+    : ''
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 25_000)
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: 'system',
+            content: `You are a concise WhatsApp sales assistant for ${biz.company?.name || 'our agency'}.
+Approved services context:
+${services}
+Tone: professional, friendly, direct. Language: match the user's language (prefer Russian for KZ).
+Keep replies short (2–5 sentences). End with this signature line exactly: ${biz.voice?.signature || '— Team'}
+Calendar for meetings: ${biz.company?.calendar_url || ''}`,
+          },
+          {
+            role: 'user',
+            content: `Lead: ${ctx.leadName} (${ctx.leadCategory || '—'}, ${ctx.leadCity || '—'})${history}
+
+Their message: ${ctx.inboundMessage.slice(0, 800)}
+
+Reply helpfully; if unclear, ask one clarifying question.`,
+          },
+        ],
+        max_tokens: 400,
+        temperature: 0.55,
+      }),
+      signal: controller.signal,
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
+    const body = data.choices?.[0]?.message?.content?.trim()
+    if (!body) return null
+    return { channel: 'whatsapp', body }
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function generateOllamaResponse(ctx: ResponseContext): Promise<{ body: string; channel: 'whatsapp' } | null> {
   const ollamaUrl = env.OLLAMA_URL || 'http://localhost:11434'
   const biz = loadBusiness()
@@ -206,6 +267,8 @@ async function generateOllamaResponse(ctx: ResponseContext): Promise<{ body: str
     ? '\n\nConversation so far:\n' + ctx.conversationHistory.slice(-6).join('\n')
     : ''
 
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10_000)
   try {
     const res = await fetch(`${ollamaUrl}/api/generate`, {
       method: 'POST',
@@ -230,6 +293,7 @@ Reply:`,
         stream: false,
         options: { temperature: 0.7, num_predict: 250 },
       }),
+      signal: controller.signal,
     })
     if (!res.ok) return null
     const data = (await res.json()) as { response?: string }
@@ -238,6 +302,8 @@ Reply:`,
     return { channel: 'whatsapp', body }
   } catch {
     return null
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -261,7 +327,8 @@ export function extractQualificationFromMessage(
     else if (/3|три/i.test(lower) && lower.length < 10) updates.service = 'Мобильное приложение'
   }
 
-  if (!currentData.description && message.length > 30) {
+  if (!currentData.description && message.length > 50
+      && !/^(да|ок|спасибо|хорошо|нет|привет|здравств|понял|отлично|соглас|конечно)/i.test(message.trim())) {
     updates.description = message.slice(0, 1000)
   }
 

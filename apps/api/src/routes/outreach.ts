@@ -762,6 +762,22 @@ outreachRouter.post('/sequences/start', async (c) => {
   const { leadId, sequenceKey = 'cold_outreach', contactId } = body as { leadId?: string; sequenceKey?: string; contactId?: string }
   if (!leadId) return c.json({ error: 'leadId required' }, 400)
 
+  const [coolRow] = await db
+    .select({ nextOutreachEligibleAt: leads.nextOutreachEligibleAt })
+    .from(leads)
+    .where(eq(leads.id, leadId))
+    .limit(1)
+  if (coolRow?.nextOutreachEligibleAt && coolRow.nextOutreachEligibleAt.getTime() > Date.now()) {
+    return c.json(
+      {
+        error: 'Lead on outreach cooldown',
+        code: 'COOLDOWN',
+        until: coolRow.nextOutreachEligibleAt.toISOString(),
+      },
+      429,
+    )
+  }
+
   const tenant = c.get('tenant') as { id: string } | null
   const tenantId = tenant?.id ?? null
 

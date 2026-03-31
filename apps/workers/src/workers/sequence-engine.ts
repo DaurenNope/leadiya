@@ -3,7 +3,7 @@ import { db, leads, contacts, leadSequenceState, eq, sql, and } from '@leadiya/d
 import { whatsappOutreachQueue, emailOutreachQueue } from '@leadiya/queue'
 export { handleInboundReply } from './inbound-reply.js'
 import { withCronLock } from '../lib/cron-lock.js'
-import { getOutreachTemplateDefaults } from '../lib/worker-business-config.js'
+import { getAutomationLimits, getOutreachTemplateDefaults } from '../lib/worker-business-config.js'
 import { getMergedSequencesForTenant } from '../lib/merged-sequences.js'
 
 interface SequenceStep {
@@ -21,6 +21,11 @@ interface SequenceDef {
 }
 
 const DEFAULT_TENANT_ENV = process.env.DEFAULT_TENANT_ID?.trim() || null
+
+async function applyLeadCooldown(leadId: string, cooldownMs: number) {
+  const until = new Date(Date.now() + cooldownMs)
+  await db.update(leads).set({ nextOutreachEligibleAt: until, updatedAt: new Date() }).where(eq(leads.id, leadId))
+}
 
 function parseDelay(delay: string | number | undefined): number {
   if (delay == null) return 0
@@ -63,6 +68,7 @@ cron.schedule('*/15 * * * *', async () => {
 
 async function advanceSequences() {
   const now = new Date()
+  const { maxFollowupsPerLead, defaultCooldownMs } = getAutomationLimits()
 
   const readyStates = await db
     .select()
@@ -98,11 +104,41 @@ async function advanceSequences() {
       const step = seqDef.steps[nextIdx]
 
       if (!step) {
-        await db.update(leadSequenceState).set({ status: 'completed', updatedAt: new Date() }).where(eq(leadSequenceState.id, state.id))
+        const cdMs = parseDelay(seqDef.cooldown ?? '30d') || defaultCooldownMs
+        await applyLeadCooldown(state.leadId, cdMs > 0 ? cdMs : defaultCooldownMs)
+        await db.update(leadSequenceState).set({ status: 'completed', nextStepAt: null, updatedAt: new Date() }).where(eq(leadSequenceState.id, state.id))
+        continue
+      }
+
+      const cooldownMs = parseDelay(seqDef.cooldown ?? '30d') || defaultCooldownMs
+
+      if (state.messageCount >= maxFollowupsPerLead) {
+        await applyLeadCooldown(state.leadId, cooldownMs > 0 ? cooldownMs : defaultCooldownMs)
+        await db
+          .update(leadSequenceState)
+          .set({ status: 'cold', nextStepAt: null, updatedAt: new Date() })
+          .where(eq(leadSequenceState.id, state.id))
+        console.log(`[sequence-engine] Lead ${state.leadId} max follow-ups (${maxFollowupsPerLead}) — parked cold`)
         continue
       }
 
       if (step.condition === 'no_response' && state.lastReplyAt && state.lastOutreachAt && state.lastReplyAt > state.lastOutreachAt) {
+        const afterSkipped = seqDef.steps[nextIdx + 1]
+        if (!afterSkipped) {
+          await applyLeadCooldown(state.leadId, cooldownMs > 0 ? cooldownMs : defaultCooldownMs)
+          await db
+            .update(leadSequenceState)
+            .set({ currentStep: nextIdx, status: 'completed', nextStepAt: null, updatedAt: now })
+            .where(eq(leadSequenceState.id, state.id))
+          console.log(`[sequence-engine] Skipped no_response step ${nextIdx} for ${state.leadId} — sequence complete`)
+        } else {
+          const nextAt = new Date(now.getTime() + parseDelay(afterSkipped.delay))
+          await db
+            .update(leadSequenceState)
+            .set({ currentStep: nextIdx, nextStepAt: nextAt, updatedAt: now })
+            .where(eq(leadSequenceState.id, state.id))
+          console.log(`[sequence-engine] Skipped no_response step ${nextIdx} for ${state.leadId} (already replied) — advanced`)
+        }
         continue
       }
 
@@ -213,6 +249,68 @@ export async function startSequence(
       .limit(1)
     return { stateId: existing?.id ?? 'already_active' }
   }
+
+  const firstStep = sequences[sequenceKey].steps[0]
+  if (firstStep) {
+    try {
+      const [lead] = await db
+        .select({ id: leads.id, name: leads.name, category: leads.category, city: leads.city, whatsapp: leads.whatsapp, email: leads.email })
+        .from(leads)
+        .where(eq(leads.id, leadId))
+        .limit(1)
+
+      if (lead) {
+        const vars = buildVars(lead)
+        const body = renderTemplate(firstStep.template, vars)
+
+        if (firstStep.channel === 'whatsapp') {
+          let phoneDigits: string | null = null
+          if (contactId) {
+            const [c] = await db.select({ phone: contacts.phone }).from(contacts).where(eq(contacts.id, contactId)).limit(1)
+            phoneDigits = c?.phone?.replace(/\D/g, '') ?? null
+          }
+          if (!phoneDigits) {
+            const m = (lead.whatsapp ?? '').match(/\d{10,}/)
+            phoneDigits = m?.[0] ?? null
+          }
+          if (phoneDigits) {
+            await whatsappOutreachQueue.add('send', {
+              leadId, phoneDigits, body,
+              sequenceKey, stepIndex: 0,
+              tenantId: tenantId ?? DEFAULT_TENANT_ENV ?? undefined,
+            }, { removeOnComplete: true })
+            await db.update(leadSequenceState)
+              .set({ messageCount: sql`${leadSequenceState.messageCount} + 1`, updatedAt: now })
+              .where(eq(leadSequenceState.id, state.id))
+            console.log(`[sequence-engine] Sent step 0 for ${leadId} (${sequenceKey})`)
+          }
+        } else if (firstStep.channel === 'email') {
+          let emailTo = lead.email?.trim() || null
+          if (!emailTo) {
+            const rows = await db.select({ email: contacts.email }).from(contacts).where(eq(contacts.leadId, leadId)).limit(5)
+            emailTo = rows.find(c => c.email?.includes('@'))?.email ?? null
+          }
+          if (emailTo) {
+            const subjectMatch = body.match(/^Тема:\s*(.+)$/m)
+            const subject = subjectMatch?.[1]?.trim() || `Сотрудничество с ${lead.name || 'вашей компанией'}`
+            const emailBody = subjectMatch ? body.replace(/^Тема:\s*.+\n?/m, '').trim() : body
+            await emailOutreachQueue.add('send', {
+              leadId, to: emailTo, subject, body: emailBody,
+              sequenceKey, stepIndex: 0,
+              tenantId: tenantId ?? DEFAULT_TENANT_ENV ?? undefined,
+            }, { removeOnComplete: true })
+            await db.update(leadSequenceState)
+              .set({ messageCount: sql`${leadSequenceState.messageCount} + 1`, updatedAt: now })
+              .where(eq(leadSequenceState.id, state.id))
+            console.log(`[sequence-engine] Sent step 0 email for ${leadId} (${sequenceKey})`)
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`[sequence-engine] Failed to send step 0 for ${leadId}:`, err)
+    }
+  }
+
   return { stateId: state.id }
 }
 
