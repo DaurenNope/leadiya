@@ -9,6 +9,8 @@ const ctx = vi.hoisted(() => {
   vi.stubEnv('REDIS_URL', 'redis://127.0.0.1:6379')
   vi.stubEnv('STRIPE_SECRET_KEY', 'sk_test_vitest_placeholder_key_only')
   vi.stubEnv('DEFAULT_TENANT_ID', '')
+  /** Deterministic outreach tests; dotenv will not override if already set. */
+  vi.stubEnv('WHATSAPP_BAILEYS_ENABLED', 'false')
 
   const selectQueue: unknown[] = []
 
@@ -68,10 +70,6 @@ const ctx = vi.hoisted(() => {
 
   return { selectQueue, run2GisScraper, db, inArray, whatsappAdd }
 })
-
-vi.mock('@hono/node-server', () => ({
-  serve: vi.fn(),
-}))
 
 vi.mock('bullmq', () => ({
   Queue: vi.fn(function QueueMock(this: { add: ReturnType<typeof vi.fn> }) {
@@ -298,6 +296,7 @@ describe('API (Hono)', () => {
           completedAt: null,
         },
       ])
+      ctx.selectQueue.push([{ n: 12 }])
       const res = await app.request(`/api/scrapers/runs/${runId}`)
       expect(res.status).toBe(200)
       const data = (await res.json()) as {
@@ -307,7 +306,7 @@ describe('API (Hono)', () => {
         status: string
       }
       expect(data.status).toBe('running')
-      expect(data.resultsCount).toBe(4)
+      expect(data.resultsCount).toBe(12)
       expect(data.detailAttempts).toBe(27)
       expect(data.totalSkipped).toBe(31)
     })
@@ -380,6 +379,64 @@ describe('API (Hono)', () => {
       } finally {
         if (prev !== undefined) process.env.RESEND_API_KEY = prev
         else delete process.env.RESEND_API_KEY
+      }
+    })
+
+    it('GET /api/outreach/scripts returns 403 when no tenant (scripts require org)', async () => {
+      const prev = process.env.DEFAULT_TENANT_ID
+      process.env.DEFAULT_TENANT_ID = ''
+      try {
+        const res = await app.request('/api/outreach/scripts')
+        expect(res.status).toBe(403)
+        const body = (await res.json()) as { code?: string }
+        expect(body.code).toBe('TENANT_REQUIRED')
+      } finally {
+        if (prev !== undefined) process.env.DEFAULT_TENANT_ID = prev
+        else delete process.env.DEFAULT_TENANT_ID
+      }
+    })
+
+    it('GET /api/outreach/scripts returns merged YAML sequences when tenant is resolved', async () => {
+      /** Must satisfy tenant middleware UUID_RE (RFC variant/version nibble). */
+      const tid = 'a0000000-0000-4000-8000-000000000001'
+      const prevDefault = process.env.DEFAULT_TENANT_ID
+      // Root .env may load after hoisted stubs; set process.env so tenant middleware sees the UUID.
+      process.env.DEFAULT_TENANT_ID = tid
+      try {
+        // tenant middleware: lookup tenants by id
+        ctx.selectQueue.push([
+          {
+            id: tid,
+            name: 'Vitest Tenant',
+            slug: 'vitest',
+            active: true,
+            icpConfig: {},
+            ownerId: null,
+            stripeSubscriptionId: null,
+            stripeCustomerId: null,
+            exportsUsed: 0,
+            quotaResetAt: null,
+            trialEndsAt: null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            deletedAt: null,
+          },
+        ])
+        // GET /scripts: override keys for tenant
+        ctx.selectQueue.push([])
+        // getMergedSequencesForTenant: outreach_sequence_defs rows
+        ctx.selectQueue.push([])
+
+        const res = await app.request('/api/outreach/scripts')
+        expect(res.status).toBe(200)
+        const data = (await res.json()) as {
+          sequences: Array<{ key: string; isOverridden?: boolean }>
+        }
+        expect(data.sequences.some((s) => s.key === 'cold_outreach')).toBe(true)
+        expect(data.sequences.find((s) => s.key === 'cold_outreach')?.isOverridden).toBe(false)
+      } finally {
+        if (prevDefault !== undefined) process.env.DEFAULT_TENANT_ID = prevDefault
+        else delete process.env.DEFAULT_TENANT_ID
       }
     })
   })
