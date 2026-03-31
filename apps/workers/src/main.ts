@@ -1,4 +1,4 @@
-import './whatsapp-bootstrap.js'
+import { env } from '@leadiya/config'
 import './queues.js'
 import './schedules.js'
 import './freshness-watchdog.js'
@@ -14,6 +14,13 @@ import './workers/sequence-engine.js'
 import './workers/email-outreach.worker.js'
 import './workers/report-engine.js'
 import { disconnectCronRedis } from './lib/cron-lock.js'
+
+/** Load after sequence-engine + other BullMQ workers so the WA worker registers a live consumer (void import() was racing). */
+if (env.WHATSAPP_BAILEYS_ENABLED === 'true' || env.WHATSAPP_BAILEYS_ENABLED === '1') {
+  await import('./workers/whatsapp-baileys.worker.js')
+} else {
+  console.log('[whatsapp] Baileys disabled (WHATSAPP_BAILEYS_ENABLED is not true)')
+}
 
 console.log('Leadiya workers started')
 

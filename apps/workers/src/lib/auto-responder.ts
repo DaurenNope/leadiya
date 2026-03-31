@@ -121,8 +121,16 @@ ${sig}` }
       return await generateQualificationResponse(ctx)
 
     case 'question':
-    case 'unknown':
-      return await generateOllamaResponse(ctx)
+    case 'unknown': {
+      const ollama = await generateOllamaResponse(ctx)
+      if (ollama) return ollama
+      const fallbackSig = biz.voice?.signature || '— Команда Rahmet Labs'
+      return { channel: 'whatsapp' as const, body: `Спасибо за сообщение! Передал команде — свяжемся в ближайшее время.
+
+Если хотите обсудить проект прямо сейчас, запишитесь на бесплатную консультацию: ${cal}
+
+${fallbackSig}` }
+    }
 
     default:
       return null

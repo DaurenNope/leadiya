@@ -9,8 +9,8 @@ import makeWASocket, {
   useMultiFileAuthState,
   type WASocket,
 } from '@whiskeysockets/baileys'
-import { env } from '@leadiya/config'
-import { db, outreachLog, contacts, leads, eq, sql, and } from '@leadiya/db'
+import { env, isWhatsappInboundLogEnabled } from '@leadiya/config'
+import { db, outreachLog, contacts, leads, eq, sql, and, gte } from '@leadiya/db'
 
 const BASE_AUTH_DIR =
   env.WHATSAPP_BAILEYS_AUTH_DIR?.trim() || resolve(process.cwd(), 'data/baileys-auth')
@@ -33,11 +33,22 @@ const pool = new Map<string, TenantConnection>()
 const IDLE_TIMEOUT_MS = 60 * 60 * 1000 // 1 hour
 const MAX_CONNECTIONS = 50
 
+/** Skip accidental double-queue (same text to same JID shortly apart). */
+const OUTBOUND_DEDUPE_WINDOW_MS = 10 * 60 * 1000
+
 function statusKey(tenantId: string) { return `wa:status:${tenantId}` }
 function qrKey(tenantId: string) { return `wa:qr:${tenantId}` }
 
+/** Redis TTL: "connected" must survive page reloads (was EX 300 → key vanished after 5 min while socket stayed open). */
+function statusTtlSec(status: 'disconnected' | 'waiting_qr' | 'connected'): number {
+  if (status === 'connected') return 604800 // 7d — refreshed on activity; Baileys session is on disk
+  if (status === 'waiting_qr') return 300
+  return 3600 // disconnected — show for a while, then expire to unknown if worker stopped
+}
+
 async function publishStatus(tenantId: string, status: 'disconnected' | 'waiting_qr' | 'connected'): Promise<void> {
-  await redis.set(statusKey(tenantId), JSON.stringify({ status, updatedAt: Date.now() }), 'EX', 300)
+  const ttl = statusTtlSec(status)
+  await redis.set(statusKey(tenantId), JSON.stringify({ status, updatedAt: Date.now() }), 'EX', ttl)
   if (status !== 'waiting_qr') await redis.del(qrKey(tenantId))
 }
 
@@ -60,11 +71,6 @@ export async function getStatus(tenantId: string): Promise<{ status: string; qr?
   }
 }
 
-function inboundLogEnabled(): boolean {
-  const v = env.WHATSAPP_INBOUND_LOG
-  return v === 'true' || v === '1'
-}
-
 function textFromUpsertMessage(m: unknown): string {
   const raw = m as { message?: Record<string, unknown> | null }
   const msg = raw.message
@@ -83,10 +89,38 @@ function textFromUpsertMessage(m: unknown): string {
   return ''
 }
 
+/**
+ * Inbound chats often arrive with `remoteJid` = …@lid (opaque id). Baileys may set `remoteJidAlt` to the
+ * phone JID (…@s.whatsapp.net). Without this, findLeadByJid and outreach_log never line up with outbounds.
+ */
+function resolveInboundPeerJid(m: { key?: { remoteJid?: string | null; remoteJidAlt?: string | null } | null }): string {
+  const k = m.key
+  if (!k?.remoteJid) return ''
+  if (k.remoteJid.endsWith('@lid') && k.remoteJidAlt?.endsWith('@s.whatsapp.net')) {
+    return k.remoteJidAlt
+  }
+  return k.remoteJid
+}
+
 async function findLeadByJid(jid: string): Promise<string | null> {
   const digits = jid.replace(/@.*$/, '')
   if (!digits || digits.length < 10) return null
   try {
+    const suffix = digits.length >= 10 ? digits.slice(-10) : null
+    if (suffix) {
+      const [fromDigits] = await db
+        .select({ leadId: outreachLog.leadId })
+        .from(outreachLog)
+        .where(
+          and(
+            sql`${outreachLog.leadId} IS NOT NULL`,
+            sql`right(regexp_replace(coalesce(${outreachLog.waPeer}::text, ''), '[^0-9]', '', 'g'), 10) = ${suffix}`,
+          ),
+        )
+        .limit(1)
+      if (fromDigits?.leadId) return fromDigits.leadId
+    }
+
     const [fromLog] = await db
       .select({ leadId: outreachLog.leadId })
       .from(outreachLog)
@@ -181,11 +215,19 @@ async function connectTenant(tenantId: string): Promise<TenantConnection> {
         conn.isOpen = false
         const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut
+        const isReplaced = statusCode === DisconnectReason.connectionReplaced
+        /** 440 = another device/session took this connection — avoid tight 4s reconnect loop. */
+        const reconnectMs = isReplaced ? 90_000 : 4_000
         console.warn(`[wa-pool] ${tenantId.slice(0, 8)} disconnected`, lastDisconnect?.error?.message, statusCode)
+        if (isReplaced) {
+          console.warn(
+            `[wa-pool] ${tenantId.slice(0, 8)} connection replaced — close WhatsApp Web/Desktop or stop a duplicate worker, then wait. Next reconnect in ${reconnectMs / 1000}s.`,
+          )
+        }
         conn.sock = null
         void publishStatus(tenantId, 'disconnected')
         if (shouldReconnect) {
-          setTimeout(() => void connectTenant(tenantId).catch(() => {}), 4000)
+          setTimeout(() => void connectTenant(tenantId).catch(() => {}), reconnectMs)
         } else {
           pool.delete(tenantId)
           console.error(`[wa-pool] ${tenantId.slice(0, 8)} logged out — user must re-scan QR`)
@@ -198,18 +240,23 @@ async function connectTenant(tenantId: string): Promise<TenantConnection> {
       }
     })
 
-    if (inboundLogEnabled()) {
-      s.ev.on('messages.upsert', async ({ messages, type }) => {
-        if (type !== 'notify') return
-        for (const m of messages) {
-          if (!m.key || m.key.fromMe) continue
-          const jid = m.key.remoteJid
-          if (!jid || jid.endsWith('@g.us')) continue
-          if (!jid.endsWith('@s.whatsapp.net') && !jid.endsWith('@lid')) continue
-          const text = textFromUpsertMessage(m).trim()
-          if (!text) continue
-          try {
-            const leadId = await findLeadByJid(jid)
+    // Inbound handling always runs so sequence/auto-reply can fire. Only DB logging is gated (privacy).
+    s.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return
+      for (const m of messages) {
+        if (!m.key || m.key.fromMe) continue
+        const jid = resolveInboundPeerJid(m)
+        if (!jid || jid.endsWith('@g.us')) continue
+        if (!jid.endsWith('@s.whatsapp.net') && !jid.endsWith('@lid')) continue
+        const text = textFromUpsertMessage(m).trim()
+        if (!text) continue
+        try {
+          const leadId = await findLeadByJid(jid)
+          if (!leadId) {
+            console.log(`[wa-pool] Inbound from ${jid} — no matching lead found, skipping reply`)
+            return
+          }
+          if (isWhatsappInboundLogEnabled()) {
             await db.insert(outreachLog).values({
               tenantId,
               leadId,
@@ -219,17 +266,17 @@ async function connectTenant(tenantId: string): Promise<TenantConnection> {
               status: 'received',
               waPeer: jid,
             })
-            if (handleInboundReplyFn) {
-              handleInboundReplyFn(leadId, jid, text).catch((err) =>
-                console.error('[wa-pool] handleInboundReply error:', err instanceof Error ? err.message : err),
-              )
-            }
-          } catch (e) {
-            console.warn('[wa-pool] inbound log insert failed:', e instanceof Error ? e.message : e)
           }
+          if (handleInboundReplyFn) {
+            handleInboundReplyFn(leadId, jid, text).catch((err) =>
+              console.error('[wa-pool] handleInboundReply error:', err instanceof Error ? err.message : err),
+            )
+          }
+        } catch (e) {
+          console.warn('[wa-pool] inbound handling failed:', e instanceof Error ? e.message : e)
         }
-      })
-    }
+      }
+    })
   } catch (e) {
     conn.connecting = false
     pool.delete(tenantId)
@@ -305,8 +352,13 @@ export function pruneIdle() {
 // Legacy compat: connect default tenant from env if WHATSAPP_BAILEYS_ENABLED
 const DEFAULT_TENANT_ID = process.env.DEFAULT_TENANT_ID
 
+const LEGACY_INIT = '__leadiyaWaLegacyConnectDone'
+
 export function initLegacyConnection() {
   if (env.WHATSAPP_BAILEYS_ENABLED !== 'true') return
+  const g = globalThis as typeof globalThis & { [LEGACY_INIT]?: boolean }
+  if (g[LEGACY_INIT]) return
+  g[LEGACY_INIT] = true
   if (DEFAULT_TENANT_ID) {
     console.log(`[wa-pool] Auto-connecting default tenant ${DEFAULT_TENANT_ID.slice(0, 8)}`)
     void connectTenant(DEFAULT_TENANT_ID).catch((e) =>
@@ -323,6 +375,26 @@ export async function sendMessage(
 ): Promise<void> {
   const sock = await ensureConnected(tenantId)
 
+  const trimmed = body.trim()
+  const since = new Date(Date.now() - OUTBOUND_DEDUPE_WINDOW_MS)
+  const [dup] = await db
+    .select({ id: outreachLog.id })
+    .from(outreachLog)
+    .where(
+      and(
+        eq(outreachLog.tenantId, tenantId),
+        eq(outreachLog.waPeer, jid),
+        eq(outreachLog.direction, 'outbound'),
+        eq(outreachLog.body, trimmed),
+        gte(outreachLog.createdAt, since),
+      ),
+    )
+    .limit(1)
+  if (dup) {
+    console.warn(`[wa-pool] skipping duplicate outbound (same peer+body within ${OUTBOUND_DEDUPE_WINDOW_MS / 60000}m)`)
+    return
+  }
+
   try {
     await sock.presenceSubscribe(jid)
     await new Promise((r) => setTimeout(r, 500 + Math.random() * 1000))
@@ -332,7 +404,7 @@ export async function sendMessage(
     await new Promise((r) => setTimeout(r, 300))
   } catch { /* typing simulation is best-effort */ }
 
-  await sock.sendMessage(jid, { text: body })
+  await sock.sendMessage(jid, { text: trimmed })
 
   try {
     await db.insert(outreachLog).values({
@@ -340,7 +412,7 @@ export async function sendMessage(
       leadId: leadId ?? null,
       channel: 'whatsapp',
       direction: 'outbound',
-      body,
+      body: trimmed,
       status: 'sent',
       sentAt: new Date(),
       waPeer: jid,

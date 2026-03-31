@@ -1,6 +1,5 @@
 import { Worker, type Job } from 'bullmq'
-import { env } from '@leadiya/config'
-import { QueueName, type WhatsAppOutreachJobData } from '@leadiya/queue'
+import { QueueName, connection, type WhatsAppOutreachJobData } from '@leadiya/queue'
 import {
   waRedis,
   sendMessage,
@@ -99,11 +98,15 @@ const whatsappWorker = new Worker<WhatsAppOutreachJobData>(
     return { ok: true, jid }
   },
   {
-    connection: { url: env.REDIS_URL },
+    connection,
     concurrency: 1,
-    limiter: { max: 1, duration: 5000 },
+    /** No BullMQ limiter — it can leave `bull:whatsapp_outreach:limiter` stuck and block all jobs. Rate limits are in-handler (Redis + min delay + business hours). */
   },
 )
+
+whatsappWorker.on('ready', () => {
+  console.log('[whatsapp] BullMQ worker connected to Redis — consuming whatsapp_outreach')
+})
 
 whatsappWorker.on('completed', (job) => {
   console.log(`[whatsapp] sent job ${job.id}`)
