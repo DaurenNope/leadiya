@@ -131,6 +131,26 @@ export const outreachLog = pgTable('outreach_log', {
   ...timestamps,
 })
 
+/** Per-tenant overrides for outreach sequences (merged over shipped `sequences.yml` defaults). */
+export const outreachSequenceDefs = pgTable(
+  'outreach_sequence_defs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .references(() => tenants.id, { onDelete: 'cascade' })
+      .notNull(),
+    sequenceKey: text('sequence_key').notNull(),
+    definition: jsonb('definition').notNull(),
+    ...timestamps,
+  },
+  (t) => ({
+    tenantSequenceUnique: uniqueIndex('outreach_sequence_defs_tenant_sequence_key').on(
+      t.tenantId,
+      t.sequenceKey,
+    ),
+  }),
+)
+
 export const leadSequenceState = pgTable('lead_sequence_state', {
   id: uuid('id').primaryKey().defaultRandom(),
   tenantId: uuid('tenant_id').references(() => tenants.id),

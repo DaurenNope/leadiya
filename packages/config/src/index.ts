@@ -69,10 +69,22 @@ const schema = z.object({
   /** Directory for Baileys multi-file auth state (default: apps/workers/data/baileys-auth) */
   WHATSAPP_BAILEYS_AUTH_DIR: z.string().optional(),
   /**
-   * When true, Baileys worker appends inbound WhatsApp messages to outreach_log (privacy-sensitive).
-   * Lets the dashboard show replies next to outbound; still not a full chat UI.
+   * When true, Baileys worker writes inbound WhatsApp messages to outreach_log (privacy-sensitive).
+   * Auto-replies still run when false; only dashboard/history logging is disabled.
    */
   WHATSAPP_INBOUND_LOG: z.string().optional(),
 });
 
-export const env = schema.parse(process.env);
+export const env = schema.parse(process.env)
+
+/**
+ * Persist inbound WhatsApp to `outreach_log` (dashboard “лента”).
+ * Default: **on** when Baileys is enabled, so replies show next to outbounds.
+ * Set `WHATSAPP_INBOUND_LOG=false` to disable storage only (privacy).
+ */
+export function isWhatsappInboundLogEnabled(): boolean {
+  const v = env.WHATSAPP_INBOUND_LOG?.trim()
+  if (v === 'false' || v === '0') return false
+  if (v === 'true' || v === '1') return true
+  return env.WHATSAPP_BAILEYS_ENABLED === 'true' || env.WHATSAPP_BAILEYS_ENABLED === '1'
+}

@@ -78,6 +78,13 @@
       "when": 1775000000000,
       "tag": "0010_results_count_contacts_uniques",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1775100000000,
+      "tag": "0011_outreach_sequence_defs",
+      "breakpoints": true
     }
   ]
 }
