@@ -67,31 +67,90 @@ function parseDelayLike(delay: string | number | undefined, fallbackMs: number):
   return v * (units[m[2]] ?? 0) || fallbackMs
 }
 
+type AutomationYaml = {
+  mode?: string
+  max_followups_per_lead?: number
+  sequence_cooldown?: string
+  founder_alert_intents?: unknown
+}
+
 let automationCache: { at: number; data: { maxFollowupsPerLead: number; defaultCooldownMs: number } } | null = null
+let founderAlertCache: { at: number; data: Set<string> | null } | null = null
+let automationModeCache: { at: number; data: string | null } | null = null
+
+function readAutomationSection(): AutomationYaml | null {
+  try {
+    const raw = readFileSync(join(process.cwd(), 'config', 'business.yml'), 'utf8')
+    const doc = parseYaml(raw) as { automation?: AutomationYaml }
+    return doc.automation ?? null
+  } catch {
+    return null
+  }
+}
 
 /** Limits from `config/business.yml` automation section (cached). */
 export function getAutomationLimits(): { maxFollowupsPerLead: number; defaultCooldownMs: number } {
   const now = Date.now()
   if (automationCache && now - automationCache.at < TTL_MS) return automationCache.data
 
-  try {
-    const raw = readFileSync(join(process.cwd(), 'config', 'business.yml'), 'utf8')
-    const doc = parseYaml(raw) as {
-      automation?: { max_followups_per_lead?: number; sequence_cooldown?: string }
-    }
-    const max = doc.automation?.max_followups_per_lead ?? 4
-    const cd = doc.automation?.sequence_cooldown ?? '30d'
-    const data = {
-      maxFollowupsPerLead: Math.max(1, Number(max) || 4),
-      defaultCooldownMs: parseDelayLike(cd, 30 * 86_400_000),
-    }
-    automationCache = { at: now, data }
-    return data
-  } catch {
-    const data = { maxFollowupsPerLead: 4, defaultCooldownMs: 30 * 86_400_000 }
-    automationCache = { at: now, data }
-    return data
+  const auto = readAutomationSection()
+  const max = auto?.max_followups_per_lead ?? 4
+  const cd = auto?.sequence_cooldown ?? '30d'
+  const data = {
+    maxFollowupsPerLead: Math.max(1, Number(max) || 4),
+    defaultCooldownMs: parseDelayLike(cd, 30 * 86_400_000),
   }
+  automationCache = { at: now, data }
+  return data
+}
+
+/**
+ * `automation.mode` from business.yml (e.g. `fully_automatic`). Used with inbound auto-reply / HITL.
+ * Cached with the same TTL as other automation reads.
+ */
+export function getAutomationMode(): string | null {
+  const now = Date.now()
+  if (automationModeCache && now - automationModeCache.at < TTL_MS) return automationModeCache.data
+
+  const auto = readAutomationSection()
+  const raw = auto?.mode
+  const data = typeof raw === 'string' && raw.trim() ? raw.trim().toLowerCase() : null
+  automationModeCache = { at: now, data }
+  return data
+}
+
+/**
+ * When `null`, every founder-alert intent is allowed (same as omitting `founder_alert_intents` in YAML).
+ * When a (possibly empty) Set, only those intent names get a WhatsApp ping to FOUNDER_WHATSAPP.
+ */
+export function getFounderAlertIntentAllowlist(): Set<string> | null {
+  const now = Date.now()
+  if (founderAlertCache && now - founderAlertCache.at < TTL_MS) return founderAlertCache.data
+
+  const auto = readAutomationSection()
+  const raw = auto?.founder_alert_intents
+  if (raw === undefined) {
+    founderAlertCache = { at: now, data: null }
+    return null
+  }
+  if (!Array.isArray(raw)) {
+    founderAlertCache = { at: now, data: null }
+    return null
+  }
+  const set = new Set(
+    raw
+      .filter((x): x is string => typeof x === 'string')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  )
+  founderAlertCache = { at: now, data: set }
+  return set
+}
+
+export function shouldSendFounderAlert(intent: string): boolean {
+  const allow = getFounderAlertIntentAllowlist()
+  if (allow === null) return true
+  return allow.has(intent.trim().toLowerCase())
 }
 
 export function getReportBrand(): ReportBrand {

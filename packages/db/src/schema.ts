@@ -59,13 +59,21 @@ export const contacts = pgTable('contacts', {
   tenantId: uuid('tenant_id').references(() => tenants.id),
   fullName: text('full_name'),
   role: text('role'),
-  phone: text('phone').unique(),
+  phone: text('phone'),
   email: text('email'),
   isPrimary: boolean('is_primary').default(false),
   source: text('source'),
   sourceUrl: text('source_url'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => {
+  return {
+    contactLeadPhoneUid: uniqueIndex('contact_lead_phone_idx').on(
+      table.tenantId,
+      table.leadId,
+      table.phone
+    )
+  }
 })
 
 export const tenders = pgTable('tenders', {

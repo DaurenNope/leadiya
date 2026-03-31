@@ -13,16 +13,15 @@ export class DiscoveryLogic {
         if (data.email && await leadRepository.existsByEmail(data.email)) {
             return { lead: null, duplicate: true };
         }
-        if (data.phone && await leadRepository.existsByPhone(data.phone)) {
+        const idSeed = `${data.companyName.toLowerCase().trim()}|${(data.city || 'KZ').toLowerCase().trim()}`;
+        const id = createHash('sha256').update(idSeed).digest('hex').substring(0, 32).replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5') as UUID;
+        if (data.phone && await leadRepository.existsByPhone(data.phone, id, tenantId)) {
             return { lead: null, duplicate: true };
         }
         if (data.companyName) {
             const exists = await leadRepository.companyNameExists(data.companyName);
             if (exists) return { lead: null, duplicate: true };
         }
-
-        const idSeed = `${data.companyName.toLowerCase().trim()}|${(data.city || 'KZ').toLowerCase().trim()}`;
-        const id = createHash('sha256').update(idSeed).digest('hex').substring(0, 32).replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5') as UUID;
 
         const normalizedPhone = data.phone ? LeadFactory.normalizePhone(data.phone) : undefined;
 

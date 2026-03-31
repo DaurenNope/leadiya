@@ -50,6 +50,14 @@ voice:
     - no_fluff
 automation:
   mode: fully_automatic
+  # Pings to FOUNDER_WHATSAPP for inbound intents. Omit this key to allow all intents; [] silences all.
+  founder_alert_intents:
+    - positive
+    - pricing
+    - qualification
+    - meeting
+    - escalation
+    - max_turns
   max_outreach_per_day: 30
   max_outreach_per_hour: 10
   delay_between_messages_ms: 45000

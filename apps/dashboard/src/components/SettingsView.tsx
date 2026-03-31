@@ -122,6 +122,25 @@ type TabId = (typeof TABS)[number]['id']
 /*  Types                                                             */
 /* ------------------------------------------------------------------ */
 
+/** Intents that can ping FOUNDER_WHATSAPP (must match inbound-reply `sendFounderAlert` names). */
+const FOUNDER_ALERT_INTENT_IDS = [
+  'positive',
+  'pricing',
+  'qualification',
+  'meeting',
+  'escalation',
+  'max_turns',
+] as const
+
+const FOUNDER_ALERT_LABELS: Record<(typeof FOUNDER_ALERT_INTENT_IDS)[number], string> = {
+  positive: 'Интерес / позитив',
+  pricing: 'Цена / коммерция',
+  qualification: 'Квалификация',
+  meeting: 'Встреча',
+  escalation: 'Низкая уверенность / эскалация',
+  max_turns: 'Лимит автоответов',
+}
+
 interface AutomationSettings {
   max_outreach_per_day: number
   max_outreach_per_hour: number
@@ -130,6 +149,8 @@ interface AutomationSettings {
   max_followups_per_lead: number
   cooldown_after_response: boolean
   typing_simulation: boolean
+  /** Subset of FOUNDER_ALERT_INTENT_IDS — saved to business.yml as automation.founder_alert_intents */
+  founder_alert_intents: string[]
   business_hours: {
     enabled: boolean
     start: number
@@ -162,6 +183,7 @@ const DEFAULT_AUTOMATION: AutomationSettings = {
   max_followups_per_lead: 3,
   cooldown_after_response: true,
   typing_simulation: true,
+  founder_alert_intents: [...FOUNDER_ALERT_INTENT_IDS],
   business_hours: { enabled: true, start: 9, end: 19, timezone: 'Asia/Almaty' },
   warmup: { enabled: true, day1_limit: 5, ramp_per_day: 3, max_daily: 30 },
 }
@@ -268,6 +290,15 @@ export function SettingsView() {
         setAutomation({
           ...DEFAULT_AUTOMATION,
           ...a,
+          founder_alert_intents:
+            a.founder_alert_intents === undefined
+              ? DEFAULT_AUTOMATION.founder_alert_intents
+              : Array.isArray(a.founder_alert_intents)
+                ? (a.founder_alert_intents as unknown[])
+                    .filter((x): x is string => typeof x === 'string')
+                    .map((s) => s.trim().toLowerCase())
+                    .filter(Boolean)
+                : DEFAULT_AUTOMATION.founder_alert_intents,
           business_hours: { ...DEFAULT_AUTOMATION.business_hours, ...(a.business_hours ?? {}) },
           warmup: { ...DEFAULT_AUTOMATION.warmup, ...(a.warmup ?? {}) },
         })
@@ -709,6 +740,38 @@ export function SettingsView() {
                       className={inputCls}
                     />
                   </FieldRow>
+                </div>
+              </div>
+
+              {/* Уведомления основателю */}
+              <div className="crm-panel p-6 rounded-2xl space-y-5">
+                <h3 className={sectionTitleCls}>Уведомления основателю (WhatsApp)</h3>
+                <p className={helpCls}>
+                  Какие события дублировать на номер из <code className="text-slate-400">FOUNDER_WHATSAPP</code>. Пустой список
+                  отключает все пинги. Нужен перезапуск воркера не обязателен — конфиг подхватывается с задержкой до ~1 мин.
+                </p>
+                <FieldRow label="Типы событий" help="Удалите тег, чтобы не получать этот тип">
+                  <TagInput
+                    tags={automation.founder_alert_intents}
+                    onChange={(tags) => setAuto('founder_alert_intents', tags)}
+                    placeholder="например qualification…"
+                  />
+                </FieldRow>
+                <div className="flex flex-wrap gap-2">
+                  {FOUNDER_ALERT_INTENT_IDS.map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => {
+                        const t = automation.founder_alert_intents
+                        if (t.includes(id)) return
+                        setAuto('founder_alert_intents', [...t, id])
+                      }}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-slate-800 border border-white/10 text-slate-300 hover:border-sky-500/40 transition-colors"
+                    >
+                      + {FOUNDER_ALERT_LABELS[id]}
+                    </button>
+                  ))}
                 </div>
               </div>
 

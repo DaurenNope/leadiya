@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm'
+import { eq, and, sql } from 'drizzle-orm'
 import { db } from './db.js'
 import { contacts, leads } from './schema.js'
 import type { FoundationLead } from './foundation-types.js'
@@ -41,11 +41,11 @@ async function existsByEmail(email: string): Promise<boolean> {
   return row.length > 0
 }
 
-async function existsByPhone(phone: string): Promise<boolean> {
+async function existsByPhone(phone: string, leadId: string, tenantId: string): Promise<boolean> {
   const row = await db
     .select({ id: contacts.id })
     .from(contacts)
-    .where(eq(contacts.phone, phone))
+    .where(and(eq(contacts.phone, phone), eq(contacts.leadId, leadId), eq(contacts.tenantId, tenantId)))
     .limit(1)
   return row.length > 0
 }
@@ -88,29 +88,33 @@ async function create(lead: FoundationLead): Promise<FoundationLead> {
       },
     })
 
-  for (const c of lead.contacts) {
-    for (const p of c.phones ?? []) {
-      if (!p.number) continue
-      await db
-        .insert(contacts)
-        .values({
-          leadId: lead.id,
-          phone: p.number,
-          source: p.source ?? lead.pipeline.source,
-          isPrimary: p.isPrimary ?? false,
-        })
-        .onConflictDoNothing()
-    }
+   for (const c of lead.contacts) {
+     for (const p of c.phones ?? []) {
+       if (!p.number) continue
+       await db
+         .insert(contacts)
+         .values({
+           id: crypto.randomUUID(),
+           leadId: lead.id,
+           tenantId: lead.tenantId,
+           phone: p.number,
+           source: p.source ?? lead.pipeline.source,
+           isPrimary: p.isPrimary ?? false,
+         })
+         .onConflictDoNothing()
+     }
     for (const e of c.emails ?? []) {
-      if (!e.address) continue
-      await db
-        .insert(contacts)
-        .values({
-          leadId: lead.id,
-          email: e.address,
-          source: e.source ?? lead.pipeline.source,
-          isPrimary: e.isPrimary ?? false,
-        })
+       if (!e.address) continue
+       await db
+         .insert(contacts)
+         .values({
+           id: crypto.randomUUID(),
+           leadId: lead.id,
+           tenantId: lead.tenantId,
+           email: e.address,
+           source: e.source ?? lead.pipeline.source,
+           isPrimary: e.isPrimary ?? false,
+         })
         .onConflictDoNothing()
     }
   }

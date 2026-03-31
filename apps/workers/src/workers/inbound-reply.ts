@@ -6,16 +6,23 @@ import {
 import { classifyReply, type ClassifyResult } from '../lib/intent-classifier.js'
 import { generateResponse, extractQualificationFromMessage, type ResponseContext } from '../lib/auto-responder.js'
 import { processReferral } from '../lib/contact-extractor.js'
-import { getAutomationLimits } from '../lib/worker-business-config.js'
+import { getAutomationLimits, getAutomationMode, shouldSendFounderAlert } from '../lib/worker-business-config.js'
 import { maxInboundAutoReplies } from '../lib/inbound-auto-reply-limits.js'
 
 const DEFAULT_TENANT_ENV = process.env.DEFAULT_TENANT_ID?.trim() || null
 const AUTO_REPLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
-/** When false (default), low-confidence classification does not auto-queue a reply — founder alert only (HITL). */
+/**
+ * Low-confidence paths (Ollama miss → `unknown`, etc.) normally escalate to human.
+ * - `OUTREACH_AUTO_REPLY_LOW_CONFIDENCE=1` forces auto-reply on.
+ * - `=0` / `false` forces off even if business.yml says fully automatic.
+ * - Otherwise, `automation.mode: fully_automatic` in business.yml enables auto-reply (same intent as the YAML flag).
+ */
 function allowLowConfidenceAutoReply(): boolean {
   const v = process.env.OUTREACH_AUTO_REPLY_LOW_CONFIDENCE?.trim()
-  return v === 'true' || v === '1'
+  if (v === 'true' || v === '1') return true
+  if (v === 'false' || v === '0') return false
+  return getAutomationMode() === 'fully_automatic'
 }
 
 function resolveTenantId(explicit?: string | null): string | undefined {
@@ -38,7 +45,6 @@ async function countRecentAutoReplies(leadId: string): Promise<number> {
         eq(outreachLog.channel, 'whatsapp'),
         eq(outreachLog.direction, 'outbound'),
         sql`${outreachLog.createdAt} >= ${since}`,
-        /** Founder/operator pings must not count toward customer auto-reply cap */
         or(isNull(outreachLog.status), ne(outreachLog.status, 'internal_alert')),
       ),
     )
@@ -344,6 +350,7 @@ export async function handleInboundReply(
 }
 
 async function sendFounderAlert(leadId: string, intent: string, message: string, tenantId?: string | null) {
+  if (!shouldSendFounderAlert(intent)) return
   const founderPhone = process.env.FOUNDER_WHATSAPP?.replace(/\D/g, '')
   if (!founderPhone) return
 
@@ -369,9 +376,14 @@ Message: "${message.slice(0, 200)}"
 
 Lead ID: ${leadId}`
 
-  await whatsappOutreachQueue.add('send', {
-    phoneDigits: founderPhone,
-    body,
-    tenantId: tenantId ?? undefined,
-  }, { removeOnComplete: true })
+  await whatsappOutreachQueue.add(
+    'send',
+    {
+      phoneDigits: founderPhone,
+      body,
+      tenantId: tenantId ?? undefined,
+      outreachLogStatus: 'internal_alert',
+    },
+    { removeOnComplete: true },
+  )
 }

@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { Redis } from 'ioredis'
-import { exists, or, type SQL } from 'drizzle-orm'
+import { exists, isNull, ne, or, type SQL } from 'drizzle-orm'
 import {
   db,
   leads,
@@ -241,6 +241,7 @@ outreachRouter.get('/log', async (c) => {
   const orderRaw = c.req.query('order')?.trim()?.toLowerCase()
   const limit = Math.min(500, Math.max(1, parseInt(limitRaw ?? '50', 10) || 50))
   const channel = c.req.query('channel')?.trim()
+  const includeInternal = c.req.query('includeInternal') === '1'
   const tenant = c.get('tenant') as { id: string } | null
   const tenantId = tenant?.id
 
@@ -295,8 +296,11 @@ outreachRouter.get('/log', async (c) => {
     }
 
     if (leadId) {
-      const conditions = [eq(outreachLog.leadId, leadId)]
+      const conditions: SQL[] = [eq(outreachLog.leadId, leadId)]
       if (tenantId) conditions.push(tenantOutreachScope(tenantId))
+      if (!includeInternal) {
+        conditions.push(or(isNull(outreachLog.status), ne(outreachLog.status, 'internal_alert'))!)
+      }
       const rows = await db
         .select()
         .from(outreachLog)
@@ -310,6 +314,9 @@ outreachRouter.get('/log', async (c) => {
     const conds: SQL[] = []
     if (channel) conds.push(eq(outreachLog.channel, channel))
     if (tenantId) conds.push(tenantOutreachScope(tenantId))
+    if (!includeInternal) {
+      conds.push(or(isNull(outreachLog.status), ne(outreachLog.status, 'internal_alert'))!)
+    }
 
     const listLimit = Math.min(limit, 200)
     const rows = await db

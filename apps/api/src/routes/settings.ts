@@ -24,7 +24,18 @@ function writeYaml(file: string, data: Record<string, unknown>): void {
 }
 
 const COMPANY_ALLOWED = new Set(['name', 'calendar_url', 'website', 'industry', 'description', 'logo_url'])
-const AUTOMATION_ALLOWED = new Set(['warmup_enabled', 'daily_limit', 'business_hours_start', 'business_hours_end', 'business_hours_tz', 'typing_simulation', 'auto_reply_enabled', 'auto_reply_low_confidence'])
+const AUTOMATION_ALLOWED = new Set([
+  'warmup_enabled',
+  'daily_limit',
+  'business_hours_start',
+  'business_hours_end',
+  'business_hours_tz',
+  'typing_simulation',
+  'auto_reply_enabled',
+  'auto_reply_low_confidence',
+  /** Which inbound intents trigger FOUNDER_WHATSAPP pings; omit in YAML = all intents. */
+  'founder_alert_intents',
+])
 
 function pickAllowed(obj: Record<string, unknown>, allowed: Set<string>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
@@ -51,6 +62,13 @@ settingsRouter.put('/automation', async (c) => {
     const body = await c.req.json()
     const doc = readYaml('business.yml')
     const filtered = pickAllowed(body as Record<string, unknown>, AUTOMATION_ALLOWED)
+    if (filtered.founder_alert_intents !== undefined) {
+      const v = filtered.founder_alert_intents
+      if (!Array.isArray(v) || !v.every((x) => typeof x === 'string')) {
+        return c.json({ error: 'founder_alert_intents must be an array of strings' }, 400)
+      }
+      filtered.founder_alert_intents = v.map((s) => String(s).trim().toLowerCase()).filter(Boolean)
+    }
     doc.automation = { ...(doc.automation as Record<string, unknown> ?? {}), ...filtered }
     writeYaml('business.yml', doc)
     return c.json({ ok: true, automation: doc.automation })
