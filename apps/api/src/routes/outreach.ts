@@ -1,18 +1,37 @@
 import { Hono } from 'hono'
 import { Redis } from 'ioredis'
-import { db, leads, outreachLog, contacts, leadSequenceState, eq, desc, and, sql } from '@leadiya/db'
+import { exists, or, type SQL } from 'drizzle-orm'
+import {
+  db,
+  leads,
+  outreachLog,
+  contacts,
+  leadSequenceState,
+  tenantLeads,
+  outreachSequenceDefs,
+  eq,
+  desc,
+  asc,
+  and,
+  sql,
+} from '@leadiya/db'
 import { whatsappOutreachQueue } from '@leadiya/queue'
-import { env } from '@leadiya/config'
+import { env, isWhatsappInboundLogEnabled } from '@leadiya/config'
 import { z } from 'zod'
 import { leadListFields } from '../lib/lead-select.js'
-import { loadOutreachSequences, loadBusinessConfig, listSequenceSummaries } from '../lib/outreach-config.js'
+import { loadBusinessConfig, listSequenceSummariesFromMap } from '../lib/outreach-config.js'
+import {
+  getMergedSequencesForTenant,
+  bustSequenceCachesAfterDbWrite,
+} from '../lib/sequence-resolver.js'
 import { renderTemplate, buildOutreachVars } from '../lib/render-outreach.js'
 import { phoneDigitsForWa, waMeLink } from '../lib/wa-link.js'
 import { buildMailtoUrl, splitEmailTemplate } from '../lib/mailto.js'
 import type { AppEnv } from '../types.js'
 
+/** Runtime read so tests can `vi.stubEnv('WHATSAPP_BAILEYS_ENABLED', …)` without reloading config. */
 function isBaileysSendEnabled(): boolean {
-  const v = env.WHATSAPP_BAILEYS_ENABLED
+  const v = process.env.WHATSAPP_BAILEYS_ENABLED
   return v === 'true' || v === '1'
 }
 
@@ -22,6 +41,28 @@ function isResendEmailEnabled(): boolean {
 }
 
 const MAX_SCHEDULE_DELAY_MS = 7 * 24 * 60 * 60 * 1000
+
+/** Scope outreach_log rows to this tenant: Baileys rows have tenant_id; legacy manual rows may be null but lead is claimed in tenant_leads. */
+function tenantOutreachScope(tenantId: string): SQL {
+  return or(
+    eq(outreachLog.tenantId, tenantId),
+    exists(
+      db
+        .select({ one: sql`1` })
+        .from(tenantLeads)
+        .where(
+          and(eq(tenantLeads.leadId, outreachLog.leadId), eq(tenantLeads.tenantId, tenantId)),
+        ),
+    ),
+  )!
+}
+
+/** Match WhatsApp rows even when JID format differs (e.g. @s.whatsapp.net vs @lid) by last 10 digits. */
+function waPeerDigitsSuffix(waPeer: string): string | null {
+  const digits = waPeer.replace(/\D/g, '')
+  if (digits.length < 10) return null
+  return digits.slice(-10)
+}
 
 async function sendEmailViaResend(to: string, subject: string, textBody: string): Promise<void> {
   const key = process.env.RESEND_API_KEY?.trim()
@@ -50,13 +91,48 @@ async function sendEmailViaResend(to: string, subject: string, textBody: string)
 
 const outreachRouter = new Hono<AppEnv>()
 
-outreachRouter.get('/sequences', (c) => {
-  return c.json({ sequences: listSequenceSummaries() })
+/** Prefer JWT tenant; else `DEFAULT_TENANT_ID` so AUTH_BYPASS + env still resolve DB overrides. */
+function tenantIdForMerge(c: { get: (k: 'tenant') => unknown }): string | null {
+  const tenant = c.get('tenant') as { id: string } | null
+  if (tenant?.id) return tenant.id
+  return process.env.DEFAULT_TENANT_ID?.trim() || null
+}
+
+/** BullMQ payload: JWT tenant, else DEFAULT_TENANT_ID (agent / service key has no tenant row). */
+function outreachQueueTenantId(c: { get: (k: 'tenant') => unknown }): string | undefined {
+  const tenant = c.get('tenant') as { id: string } | null
+  if (tenant?.id) return tenant.id
+  const d = process.env.DEFAULT_TENANT_ID?.trim()
+  return d || undefined
+}
+
+function getScriptsTenantId(c: { get: (k: 'tenant') => unknown }): string | null {
+  const tenant = c.get('tenant') as { id: string } | null
+  return tenant?.id ?? null
+}
+
+/** Maps DB / IO failures on script routes to JSON so the dashboard can show a hint (e.g. missing migration). */
+function scriptsRouteError(
+  c: { json: (body: unknown, status?: number) => Response },
+  err: unknown,
+): Response {
+  const msg = err instanceof Error ? err.message : String(err)
+  const migrationHint =
+    /does not exist|42P01|outreach_sequence/i.test(msg)
+      ? ' Примените миграции БД из корня репозитория: npm run db:migrate (нужна таблица outreach_sequence_defs).'
+      : ''
+  console.error('[outreach/scripts]', err)
+  return c.json({ error: msg + migrationHint, code: 'SCRIPTS_ERROR' }, 500)
+}
+
+outreachRouter.get('/sequences', async (c) => {
+  const merged = await getMergedSequencesForTenant(tenantIdForMerge(c))
+  return c.json({ sequences: listSequenceSummariesFromMap(merged) })
 })
 
-outreachRouter.get('/sequences/:key', (c) => {
+outreachRouter.get('/sequences/:key', async (c) => {
   const key = c.req.param('key')
-  const sequences = loadOutreachSequences()
+  const sequences = await getMergedSequencesForTenant(tenantIdForMerge(c))
   const seq = sequences[key]
   if (!seq) return c.json({ error: 'Unknown sequence', code: 'NOT_FOUND' }, 404)
   return c.json({ key, ...seq })
@@ -66,7 +142,6 @@ outreachRouter.get('/business', (c) => {
   const b = loadBusinessConfig()
   const company = b.company as Record<string, unknown> | undefined
   const voice = b.voice as Record<string, unknown> | undefined
-  const inbound = env.WHATSAPP_INBOUND_LOG
   return c.json({
     company: {
       name: company?.name,
@@ -75,7 +150,7 @@ outreachRouter.get('/business', (c) => {
     },
     voice: { signature: voice?.signature },
     whatsapp_baileys_send: isBaileysSendEnabled(),
-    whatsapp_inbound_log: inbound === 'true' || inbound === '1',
+    whatsapp_inbound_log: isWhatsappInboundLogEnabled(),
     email_api_send: isResendEmailEnabled(),
   })
 })
@@ -104,7 +179,7 @@ outreachRouter.post('/preview', async (c) => {
     .limit(1)
   if (!lead) return c.json({ error: 'Lead not found', code: 'NOT_FOUND' }, 404)
 
-  const sequences = loadOutreachSequences()
+  const sequences = await getMergedSequencesForTenant(tenantIdForMerge(c))
   const seq = sequences[sequenceKey]
   if (!seq) return c.json({ error: 'Unknown sequence', code: 'NOT_FOUND' }, 404)
 
@@ -161,47 +236,89 @@ outreachRouter.post('/preview', async (c) => {
 
 outreachRouter.get('/log', async (c) => {
   const leadId = c.req.query('leadId')?.trim()
+  const waPeerRaw = c.req.query('waPeer')?.trim()
   const limitRaw = c.req.query('limit')
-  const limit = Math.min(200, Math.max(1, parseInt(limitRaw ?? '50', 10) || 50))
+  const orderRaw = c.req.query('order')?.trim()?.toLowerCase()
+  const limit = Math.min(500, Math.max(1, parseInt(limitRaw ?? '50', 10) || 50))
   const channel = c.req.query('channel')?.trim()
+  const tenant = c.get('tenant') as { id: string } | null
+  const tenantId = tenant?.id
+
+  const logSelect = {
+    id: outreachLog.id,
+    tenantId: outreachLog.tenantId,
+    leadId: outreachLog.leadId,
+    contactId: outreachLog.contactId,
+    channel: outreachLog.channel,
+    direction: outreachLog.direction,
+    body: outreachLog.body,
+    status: outreachLog.status,
+    sentAt: outreachLog.sentAt,
+    waPeer: outreachLog.waPeer,
+    createdAt: outreachLog.createdAt,
+    updatedAt: outreachLog.updatedAt,
+    leadName: leads.name,
+    leadCity: leads.city,
+  }
 
   try {
+    /** Full thread for one peer — avoids truncating when the global "last N rows" omits older messages in this chat. */
+    if (waPeerRaw) {
+      const conds: SQL[] = []
+      if (channel) conds.push(eq(outreachLog.channel, channel))
+      if (tenantId) conds.push(tenantOutreachScope(tenantId))
+
+      const suffix = waPeerDigitsSuffix(waPeerRaw)
+      const peerClause =
+        suffix != null
+          ? sql`right(regexp_replace(coalesce(${outreachLog.waPeer}::text, ''), '[^0-9]', '', 'g'), 10) = ${suffix}`
+          : eq(outreachLog.waPeer, waPeerRaw)
+
+      const uuidOk = leadId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(leadId)
+      if (uuidOk) {
+        conds.push(or(peerClause, eq(outreachLog.leadId, leadId!))!)
+      } else {
+        conds.push(peerClause)
+      }
+
+      const orderAsc = orderRaw === 'desc' ? false : true
+
+      const rows = await db
+        .select(logSelect)
+        .from(outreachLog)
+        .leftJoin(leads, eq(outreachLog.leadId, leads.id))
+        .where(and(...conds))
+        .orderBy(orderAsc ? asc(outreachLog.createdAt) : desc(outreachLog.createdAt))
+        .limit(Math.min(limit, 500))
+
+      return c.json({ items: rows })
+    }
+
     if (leadId) {
+      const conditions = [eq(outreachLog.leadId, leadId)]
+      if (tenantId) conditions.push(tenantOutreachScope(tenantId))
       const rows = await db
         .select()
         .from(outreachLog)
-        .where(eq(outreachLog.leadId, leadId))
+        .where(and(...conditions))
         .orderBy(desc(outreachLog.createdAt))
         .limit(Math.min(limit, 100))
 
       return c.json({ items: rows })
     }
 
-    const conds = []
+    const conds: SQL[] = []
     if (channel) conds.push(eq(outreachLog.channel, channel))
+    if (tenantId) conds.push(tenantOutreachScope(tenantId))
 
+    const listLimit = Math.min(limit, 200)
     const rows = await db
-      .select({
-        id: outreachLog.id,
-        tenantId: outreachLog.tenantId,
-        leadId: outreachLog.leadId,
-        contactId: outreachLog.contactId,
-        channel: outreachLog.channel,
-        direction: outreachLog.direction,
-        body: outreachLog.body,
-        status: outreachLog.status,
-        sentAt: outreachLog.sentAt,
-        waPeer: outreachLog.waPeer,
-        createdAt: outreachLog.createdAt,
-        updatedAt: outreachLog.updatedAt,
-        leadName: leads.name,
-        leadCity: leads.city,
-      })
+      .select(logSelect)
       .from(outreachLog)
       .leftJoin(leads, eq(outreachLog.leadId, leads.id))
       .where(conds.length ? and(...conds) : sql`true`)
       .orderBy(desc(outreachLog.createdAt))
-      .limit(limit)
+      .limit(listLimit)
 
     return c.json({ items: rows })
   } catch (err) {
@@ -248,6 +365,8 @@ outreachRouter.post('/send', async (c) => {
     )
   }
 
+  const queueTenantId = outreachQueueTenantId(c)
+
   const rawBody = await c.req.json()
   const direct = directWaSendSchema.safeParse(rawBody)
   if (direct.success) {
@@ -257,7 +376,7 @@ outreachRouter.post('/send', async (c) => {
     }
     const job = await whatsappOutreachQueue.add(
       'send',
-      { phoneDigits: digits, body: direct.data.body.trim() },
+      { phoneDigits: digits, body: direct.data.body.trim(), tenantId: queueTenantId },
       { removeOnComplete: true }
     )
     return c.json({ queued: true, jobId: job.id }, 202)
@@ -276,7 +395,7 @@ outreachRouter.post('/send', async (c) => {
     .limit(1)
   if (!lead) return c.json({ error: 'Lead not found', code: 'NOT_FOUND' }, 404)
 
-  const sequences = loadOutreachSequences()
+  const sequences = await getMergedSequencesForTenant(tenantIdForMerge(c))
   const seq = sequences[sequenceKey]
   if (!seq) return c.json({ error: 'Unknown sequence', code: 'NOT_FOUND' }, 404)
 
@@ -307,6 +426,7 @@ outreachRouter.post('/send', async (c) => {
       body: rendered,
       sequenceKey,
       stepIndex,
+      tenantId: queueTenantId,
     },
     { removeOnComplete: true }
   )
@@ -326,6 +446,8 @@ outreachRouter.post('/schedule', async (c) => {
     )
   }
 
+  const queueTenantId = outreachQueueTenantId(c)
+
   const parsed = scheduleSchema.safeParse(await c.req.json())
   if (!parsed.success) {
     return c.json({ error: 'Invalid body', code: 'VALIDATION_ERROR', details: parsed.error.format() }, 400)
@@ -339,7 +461,7 @@ outreachRouter.post('/schedule', async (c) => {
     .limit(1)
   if (!lead) return c.json({ error: 'Lead not found', code: 'NOT_FOUND' }, 404)
 
-  const sequences = loadOutreachSequences()
+  const sequences = await getMergedSequencesForTenant(tenantIdForMerge(c))
   const seq = sequences[sequenceKey]
   if (!seq) return c.json({ error: 'Unknown sequence', code: 'NOT_FOUND' }, 404)
 
@@ -370,6 +492,7 @@ outreachRouter.post('/schedule', async (c) => {
       body: rendered,
       sequenceKey,
       stepIndex,
+      tenantId: queueTenantId,
     },
     { delay: delayMs, removeOnComplete: true }
   )
@@ -406,7 +529,7 @@ outreachRouter.post('/send-email', async (c) => {
     .limit(1)
   if (!lead) return c.json({ error: 'Lead not found', code: 'NOT_FOUND' }, 404)
 
-  const sequences = loadOutreachSequences()
+  const sequences = await getMergedSequencesForTenant(tenantIdForMerge(c))
   const seq = sequences[sequenceKey]
   if (!seq) return c.json({ error: 'Unknown sequence', code: 'NOT_FOUND' }, 404)
 
@@ -433,9 +556,11 @@ outreachRouter.post('/send-email', async (c) => {
 
   await sendEmailViaResend(emailTo, subject, textOut)
 
+  const tenant = c.get('tenant') as { id: string } | null
   const [row] = await db
     .insert(outreachLog)
     .values({
+      tenantId: tenant?.id ?? null,
       leadId,
       channel: 'email',
       direction: 'outbound',
@@ -455,9 +580,11 @@ outreachRouter.post('/log', async (c) => {
   }
 
   const d = parsed.data
+  const tenant = c.get('tenant') as { id: string } | null
   const [row] = await db
     .insert(outreachLog)
     .values({
+      tenantId: tenant?.id ?? null,
       leadId: d.leadId,
       contactId: d.contactId ?? null,
       channel: d.channel,
@@ -480,10 +607,12 @@ function getRedis(): Redis {
 outreachRouter.get('/whatsapp/status', async (c) => {
   const redis = getRedis()
   const tenant = c.get('tenant') as { id: string } | null
-  const tenantId = tenant?.id
+  const defaultTid = process.env.DEFAULT_TENANT_ID?.trim()
+  /** Worker always publishes `wa:status:<uuid>` (never legacy `wa:connection:*`). Align with Baileys init when JWT has no tenant row yet. */
+  const effectiveTenantId = tenant?.id ?? defaultTid ?? null
 
-  const statusKeyPrefix = tenantId ? `wa:status:${tenantId}` : 'wa:connection:status'
-  const qrKeyPrefix = tenantId ? `wa:qr:${tenantId}` : 'wa:connection:qr'
+  const statusKeyPrefix = effectiveTenantId ? `wa:status:${effectiveTenantId}` : 'wa:connection:status'
+  const qrKeyPrefix = effectiveTenantId ? `wa:qr:${effectiveTenantId}` : 'wa:connection:qr'
 
   const [statusRaw, qr] = await Promise.all([
     redis.get(statusKeyPrefix),
@@ -498,6 +627,134 @@ outreachRouter.get('/whatsapp/status', async (c) => {
   })
 })
 
+function parseSequenceDelay(delay: string | number | undefined): number {
+  if (delay == null) return 0
+  if (typeof delay === 'number') return delay
+  const m = String(delay).match(/^(\d+)(ms|s|m|h|d)$/)
+  if (!m) return 0
+  const v = parseInt(m[1]!, 10)
+  const u: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }
+  return v * (u[m[2]!] ?? 0)
+}
+
+const sequenceStepPutSchema = z.object({
+  id: z.string().min(1),
+  channel: z.enum(['whatsapp', 'email']),
+  template: z.string().min(1).max(16_000),
+  delay: z.union([z.string(), z.number()]).optional(),
+  condition: z.string().max(200).optional(),
+})
+
+const sequenceDefPutSchema = z.object({
+  trigger: z.string().min(1).max(500),
+  steps: z.array(sequenceStepPutSchema).min(1).max(40),
+})
+
+// ── Tenant script overrides (DB) — GET/PUT/DELETE ─────────────
+
+outreachRouter.get('/scripts', async (c) => {
+  try {
+    const tenantId = getScriptsTenantId(c)
+    if (!tenantId) return c.json({ error: 'Tenant required', code: 'TENANT_REQUIRED' }, 403)
+
+    const overrideRows = await db
+      .select({ sequenceKey: outreachSequenceDefs.sequenceKey })
+      .from(outreachSequenceDefs)
+      .where(eq(outreachSequenceDefs.tenantId, tenantId))
+    const overridden = new Set(overrideRows.map((r) => r.sequenceKey))
+
+    const merged = await getMergedSequencesForTenant(tenantId)
+    const sequences = listSequenceSummariesFromMap(merged).map((s) => ({
+      ...s,
+      isOverridden: overridden.has(s.key),
+    }))
+    return c.json({ sequences })
+  } catch (err) {
+    return scriptsRouteError(c, err)
+  }
+})
+
+outreachRouter.get('/scripts/:key', async (c) => {
+  try {
+    const tenantId = getScriptsTenantId(c)
+    if (!tenantId) return c.json({ error: 'Tenant required', code: 'TENANT_REQUIRED' }, 403)
+
+    const key = c.req.param('key')
+    const overrideRows = await db
+      .select({ id: outreachSequenceDefs.id })
+      .from(outreachSequenceDefs)
+      .where(and(eq(outreachSequenceDefs.tenantId, tenantId), eq(outreachSequenceDefs.sequenceKey, key)))
+      .limit(1)
+    const isOverridden = Boolean(overrideRows[0])
+
+    const merged = await getMergedSequencesForTenant(tenantId)
+    const seq = merged[key]
+    if (!seq) return c.json({ error: 'Unknown sequence', code: 'NOT_FOUND' }, 404)
+
+    return c.json({ key, isOverridden, ...seq })
+  } catch (err) {
+    return scriptsRouteError(c, err)
+  }
+})
+
+outreachRouter.put('/scripts/:key', async (c) => {
+  try {
+    const tenantId = getScriptsTenantId(c)
+    if (!tenantId) return c.json({ error: 'Tenant required', code: 'TENANT_REQUIRED' }, 403)
+
+    const key = c.req.param('key')
+    const parsed = sequenceDefPutSchema.safeParse(await c.req.json())
+    if (!parsed.success) {
+      return c.json({ error: 'Invalid body', code: 'VALIDATION_ERROR', details: parsed.error.format() }, 400)
+    }
+
+    const def = parsed.data
+    const now = new Date()
+
+    const existing = await db
+      .select({ id: outreachSequenceDefs.id })
+      .from(outreachSequenceDefs)
+      .where(and(eq(outreachSequenceDefs.tenantId, tenantId), eq(outreachSequenceDefs.sequenceKey, key)))
+      .limit(1)
+
+    if (existing[0]) {
+      await db
+        .update(outreachSequenceDefs)
+        .set({ definition: def, updatedAt: now })
+        .where(eq(outreachSequenceDefs.id, existing[0].id))
+    } else {
+      await db.insert(outreachSequenceDefs).values({
+        tenantId,
+        sequenceKey: key,
+        definition: def,
+        updatedAt: now,
+      })
+    }
+
+    bustSequenceCachesAfterDbWrite()
+    return c.json({ ok: true, key })
+  } catch (err) {
+    return scriptsRouteError(c, err)
+  }
+})
+
+outreachRouter.delete('/scripts/:key', async (c) => {
+  try {
+    const tenantId = getScriptsTenantId(c)
+    if (!tenantId) return c.json({ error: 'Tenant required', code: 'TENANT_REQUIRED' }, 403)
+
+    const key = c.req.param('key')
+    await db
+      .delete(outreachSequenceDefs)
+      .where(and(eq(outreachSequenceDefs.tenantId, tenantId), eq(outreachSequenceDefs.sequenceKey, key)))
+
+    bustSequenceCachesAfterDbWrite()
+    return c.json({ ok: true, key })
+  } catch (err) {
+    return scriptsRouteError(c, err)
+  }
+})
+
 // ── Sequence Management ──────────────────────────────────────
 
 outreachRouter.post('/sequences/start', async (c) => {
@@ -505,10 +762,21 @@ outreachRouter.post('/sequences/start', async (c) => {
   const { leadId, sequenceKey = 'cold_outreach', contactId } = body as { leadId?: string; sequenceKey?: string; contactId?: string }
   if (!leadId) return c.json({ error: 'leadId required' }, 400)
 
+  const tenant = c.get('tenant') as { id: string } | null
+  const tenantId = tenant?.id ?? null
+
+  const merged = await getMergedSequencesForTenant(tenantIdForMerge(c))
+  const seq = merged[sequenceKey]
+  if (!seq) return c.json({ error: 'Unknown sequence', code: 'NOT_FOUND' }, 404)
+
   const now = new Date()
+  const secondStep = seq.steps[1]
+  const nextStepAt = secondStep ? new Date(now.getTime() + parseSequenceDelay(secondStep.delay)) : null
+
   const [state] = await db
     .insert(leadSequenceState)
     .values({
+      tenantId,
       leadId,
       contactId: contactId ?? null,
       sequenceKey,
@@ -517,6 +785,7 @@ outreachRouter.post('/sequences/start', async (c) => {
       intent: 'unknown',
       startedAt: now,
       lastOutreachAt: now,
+      nextStepAt,
     })
     .onConflictDoNothing()
     .returning()

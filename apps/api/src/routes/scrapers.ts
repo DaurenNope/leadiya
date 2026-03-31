@@ -54,6 +54,18 @@ scrapersRouter.get('/runs/:id', async (c) => {
     .limit(1)
 
   if (!run) return c.json({ error: 'Run not found', code: 'NOT_FOUND' }, 404)
+
+  /** 2GIS: `results_count` can lag (failed bumps) while rows still save; count tagged leads for truth. */
+  if (run.scraper === '2gis') {
+    const [{ n }] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(leads)
+      .where(sql`${leads.rawData}->>'twogisScraperRunId' = ${id}`)
+    const reconciled = Number(n) || 0
+    const stored = run.resultsCount ?? 0
+    return c.json({ ...run, resultsCount: Math.max(stored, reconciled) })
+  }
+
   return c.json(run)
 })
 

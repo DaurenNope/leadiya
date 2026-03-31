@@ -1,8 +1,4 @@
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
-import { serve } from '@hono/node-server'
 import { cors } from 'hono/cors'
 import { env } from '@leadiya/config'
 import { authMiddleware } from './middleware/auth.js'
@@ -21,15 +17,33 @@ import type { AppEnv } from './types.js'
 const app = new Hono<AppEnv>()
 export { app }
 
+/** Dev: Vite may use 5174+ if 5173 is busy; allow any localhost port. */
+function isDevLocalDashboardOrigin(origin: string): boolean {
+  if (env.NODE_ENV !== 'development') return false
+  try {
+    const u = new URL(origin)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
+    return u.hostname === 'localhost' || u.hostname === '127.0.0.1'
+  } catch {
+    return false
+  }
+}
+
 app.use('*', cors({
   origin: (origin) => {
     if (!origin) return origin
     const allowed = [
       env.DASHBOARD_URL,
+      /** Production dashboard (Rahmet Labs). Override via `DASHBOARD_URL` if you use another host. */
+      'https://app.rahmetlabs.com',
       'http://localhost:5173',
       'http://localhost:4173',
+      'http://127.0.0.1:5173',
+      'http://127.0.0.1:4173',
     ].filter(Boolean)
-    return allowed.includes(origin) ? origin : null
+    if (allowed.includes(origin)) return origin
+    if (isDevLocalDashboardOrigin(origin)) return origin
+    return null
   },
   credentials: true,
 }))
@@ -71,21 +85,3 @@ app.route('/api/leads', leadsRouter)
 app.route('/api/outreach', outreachRouter)
 app.route('/api/system', systemRouter)
 app.route('/api/settings', settingsRouter)
-
-/** Default port comes from repo-root `dev-ports.json` (single source of truth with Vite + docs). Docker image sets PORT=3001. */
-function defaultLocalApiPort(): number {
-  try {
-    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../../..')
-    const raw = readFileSync(join(repoRoot, 'dev-ports.json'), 'utf8')
-    const j = JSON.parse(raw) as { localCliApiPort?: number }
-    return typeof j.localCliApiPort === 'number' ? j.localCliApiPort : 3041
-  } catch {
-    return 3041
-  }
-}
-const port = parseInt(process.env.PORT || String(defaultLocalApiPort()), 10)
-const server = serve({ fetch: app.fetch, port })
-const shutdown = () => { server.close(); process.exit(0) }
-process.on('SIGTERM', shutdown)
-process.on('SIGINT', shutdown)
-console.log(`API server running at http://localhost:${port}`)

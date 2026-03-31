@@ -36,11 +36,18 @@ export function loadBusinessConfig(): Record<string, unknown> {
   return businessCache
 }
 
-export function listSequenceSummaries() {
-  const sequences = loadOutreachSequences()
+export function clearSequencesCache(): void {
+  sequencesCache = null
+}
+
+export function listSequenceSummariesFromMap(sequences: Record<string, SequenceDef>) {
   return Object.entries(sequences).map(([key, seq]) => ({
     key,
     trigger: seq.trigger,
     steps: seq.steps.map((s) => ({ id: s.id, channel: s.channel, delay: s.delay })),
   }))
+}
+
+export function listSequenceSummaries() {
+  return listSequenceSummariesFromMap(loadOutreachSequences())
 }

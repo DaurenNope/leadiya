@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { env } from '@leadiya/config'
+import { env, isWhatsappInboundLogEnabled } from '@leadiya/config'
 import type { AppEnv } from '../types.js'
 
 const systemRouter = new Hono<AppEnv>()
@@ -17,7 +17,7 @@ systemRouter.get('/capabilities', (c) => {
     integrations: {
       whatsappBaileysSend:
         env.WHATSAPP_BAILEYS_ENABLED === 'true' || env.WHATSAPP_BAILEYS_ENABLED === '1',
-      whatsappInboundLog: env.WHATSAPP_INBOUND_LOG === 'true' || env.WHATSAPP_INBOUND_LOG === '1',
+      whatsappInboundLog: isWhatsappInboundLogEnabled(),
       resendEmail: Boolean(env.RESEND_API_KEY?.trim()),
     },
     nodeEnv: env.NODE_ENV,
