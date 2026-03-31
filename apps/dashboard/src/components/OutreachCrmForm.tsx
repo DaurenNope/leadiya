@@ -280,7 +280,7 @@ export function OutreachCrmForm({
         <>
           {variant === 'standalone' ? (
             <p className="text-xs text-slate-500 leading-relaxed -mt-2">
-              Шаг цепочки с каналом WhatsApp (обычно первый). <strong className="text-slate-400">wa.me</strong> без Baileys.
+              Сначала «Собрать текст», затем <strong className="text-slate-300">Отправить сейчас</strong> — через Baileys (встроенная лента). Ссылка wa.me — запасной вариант без сервера.
             </p>
           ) : null}
           <div className="grid gap-4 sm:grid-cols-2">
@@ -357,26 +357,6 @@ export function OutreachCrmForm({
             placeholder="Текст сообщения…"
           />
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard.writeText(draftBody)
-                toast('Скопировано', 'success')
-              }}
-              className="flex-1 min-w-[100px] rounded-xl border border-white/[0.1] py-2.5 text-xs font-semibold text-slate-300 hover:bg-white/[0.04]"
-            >
-              Копировать
-            </button>
-            {openWhatsAppHref ? (
-              <a
-                href={openWhatsAppHref}
-                target="_blank"
-                rel="noreferrer"
-                className="flex-1 min-w-[140px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#25D366] py-2.5 text-center text-xs font-bold text-[#05301f] hover:bg-[#20bd5a] shadow-md shadow-emerald-950/30"
-              >
-                WhatsApp
-              </a>
-            ) : null}
             {baileysSend && effectiveDigits && draftBody.trim() ? (
               <button
                 type="button"
@@ -397,7 +377,7 @@ export function OutreachCrmForm({
                     })
                     const data = await res.json()
                     if (!res.ok) throw new Error((data as { error?: string }).error || 'Очередь не приняла запрос')
-                    toast('В очередь WhatsApp (Baileys)', 'success')
+                    toast('Отправлено в очередь Baileys — проверьте ленту WhatsApp', 'success')
                     refreshOutreachLogs(leadId)
                   } catch (e) {
                     toast(e instanceof Error ? e.message : 'Ошибка очереди', 'error')
@@ -405,10 +385,31 @@ export function OutreachCrmForm({
                     setOutreachBusy(false)
                   }
                 }}
-                className="flex-1 min-w-[120px] rounded-xl bg-violet-600 py-2.5 text-center text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+                className="flex-1 min-w-[160px] rounded-xl bg-violet-600 py-2.5 text-center text-xs font-bold text-white hover:bg-violet-500 disabled:opacity-50 shadow-md shadow-violet-950/40"
               >
-                В очередь
+                Отправить сейчас
               </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(draftBody)
+                toast('Скопировано', 'success')
+              }}
+              className="flex-1 min-w-[100px] rounded-xl border border-white/[0.1] py-2.5 text-xs font-semibold text-slate-300 hover:bg-white/[0.04]"
+            >
+              Копировать
+            </button>
+            {openWhatsAppHref ? (
+              <a
+                href={openWhatsAppHref}
+                target="_blank"
+                rel="noreferrer"
+                className="flex-1 min-w-[120px] inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#25D366]/40 bg-[#25D366]/10 py-2.5 text-center text-[11px] font-semibold text-[#25D366] hover:bg-[#25D366]/15"
+                title="Открыть внешнее приложение WhatsApp"
+              >
+                В приложении WA
+              </a>
             ) : null}
             <button
               type="button"
@@ -440,7 +441,9 @@ export function OutreachCrmForm({
           </div>
           {baileysSend && effectiveDigits && draftBody.trim() ? (
             <div className="rounded-xl border border-violet-500/20 bg-violet-950/25 p-3 space-y-2">
-              <p className="text-[11px] font-semibold text-violet-200/90">Отложенная отправка (очередь Redis)</p>
+              <p className="text-[11px] font-semibold text-violet-200/90">
+                Отложенная отправка (необязательно — «Отправить сейчас» выше уходит сразу в очередь)
+              </p>
               <div className="flex flex-wrap gap-2 items-center">
                 <select
                   value={scheduleDelayMs}

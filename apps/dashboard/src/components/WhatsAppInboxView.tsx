@@ -18,6 +18,9 @@ type WaLogRow = {
 }
 
 type Props = {
+  /** Open this thread after navigate from CRM (matched when log has this lead or phone). */
+  focusRequest?: { leadId?: string; phoneDigits?: string } | null
+  onFocusConsumed?: () => void
   onWorkLead: (leadId: string) => void
   onBrowseLeads: () => void
   onOpenCrm?: () => void
@@ -25,6 +28,9 @@ type Props = {
 }
 
 type Conversation = {
+  /** Stable list key + merge tracking */
+  threadKey: string
+  /** Best JID for API + sending (prefer @s.whatsapp.net over @lid) */
   peer: string
   leadId: string | null
   leadName: string | null
@@ -66,36 +72,124 @@ function initials(name: string | null | undefined, peer: string): string {
   return digits.slice(-2) || '??'
 }
 
+function pickBestWaPeer(messages: WaLogRow[]): string {
+  const jids = messages.map((m) => m.waPeer?.trim()).filter(Boolean) as string[]
+  const s = jids.find((j) => j.includes('@s.whatsapp.net'))
+  return s ?? jids[0] ?? ''
+}
+
+/** Group rows: CRM lead id wins; else last 10 digits (merges @lid vs @s.whatsapp.net for same phone). */
+function rowThreadKey(row: WaLogRow): string {
+  if (row.leadId) return `l:${row.leadId}`
+  const jid = row.waPeer?.trim()
+  if (!jid) return `u:${row.id}`
+  const digits = jid.replace(/\D/g, '')
+  if (digits.length >= 10) return `d:${digits.slice(-10)}`
+  return `j:${jid}`
+}
+
+function dedupeMergeMessages(a: WaLogRow[], b: WaLogRow[]): WaLogRow[] {
+  const seen = new Set<string>()
+  const out: WaLogRow[] = []
+  for (const m of [...a, ...b]) {
+    if (seen.has(m.id)) continue
+    seen.add(m.id)
+    out.push(m)
+  }
+  return out.sort((x, y) => new Date(x.createdAt).getTime() - new Date(y.createdAt).getTime())
+}
+
+/**
+ * Same contact often appears twice: rows with lead_id vs rows matched only by JID (@lid ≠ @s.whatsapp.net).
+ * Merge digit-only threads into lead threads when phone (last 10) matches any message wa_peer in that lead.
+ */
+function mergeLeadAndDigitThreads(conversations: Conversation[]): Conversation[] {
+  const byLead = new Map<string, Conversation>()
+  const digitOnly: Conversation[] = []
+
+  for (const c of conversations) {
+    if (c.leadId) {
+      const ex = byLead.get(c.leadId)
+      if (!ex) {
+        byLead.set(c.leadId, { ...c, messages: [...c.messages] })
+      } else {
+        ex.messages = dedupeMergeMessages(ex.messages, c.messages)
+        ex.lastMessage = ex.messages[ex.messages.length - 1]!
+        ex.peer = pickBestWaPeer(ex.messages)
+        ex.hasUnread = ex.hasUnread || c.hasUnread
+        ex.leadName = ex.leadName ?? c.leadName
+        ex.leadCity = ex.leadCity ?? c.leadCity
+      }
+    } else {
+      digitOnly.push(c)
+    }
+  }
+
+  const absorbedKeys = new Set<string>()
+  for (const c of digitOnly) {
+    const last10 = extractPhone(c.peer).slice(-10)
+    if (last10.length < 10) continue
+    let hitLead: string | undefined
+    for (const [leadId, lc] of byLead) {
+      const match = lc.messages.some((m) => {
+        const w = m.waPeer?.replace(/\D/g, '') ?? ''
+        return w.length >= 10 && w.slice(-10) === last10
+      })
+      if (match) {
+        hitLead = leadId
+        break
+      }
+    }
+    if (hitLead) {
+      const target = byLead.get(hitLead)!
+      target.messages = dedupeMergeMessages(target.messages, c.messages)
+      target.lastMessage = target.messages[target.messages.length - 1]!
+      target.peer = pickBestWaPeer(target.messages)
+      target.hasUnread = target.hasUnread || c.hasUnread
+      absorbedKeys.add(c.threadKey)
+    }
+  }
+
+  const rest = digitOnly.filter((c) => !absorbedKeys.has(c.threadKey))
+  return [...byLead.values(), ...rest].sort(
+    (a, b) => new Date(b.lastMessage.createdAt).getTime() - new Date(a.lastMessage.createdAt).getTime(),
+  )
+}
+
 function groupByConversation(items: WaLogRow[]): Conversation[] {
   const map = new Map<string, WaLogRow[]>()
   for (const row of items) {
-    const peer = row.waPeer || row.leadId || 'unknown'
-    const existing = map.get(peer) || []
+    const key = rowThreadKey(row)
+    const existing = map.get(key) || []
     existing.push(row)
-    map.set(peer, existing)
+    map.set(key, existing)
   }
-  return Array.from(map.entries())
-    .map(([peer, messages]) => {
-      const sorted = [...messages].sort(
-        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-      )
-      const lastMessage = sorted[sorted.length - 1]!
-      const lastOutIdx = sorted.findLastIndex((m) => m.direction === 'outbound')
-      const hasUnread = sorted.some((m, i) => m.direction === 'inbound' && i > lastOutIdx)
-      const leadName = sorted.findLast((m) => m.leadName)?.leadName ?? null
-      const leadCity = sorted.findLast((m) => m.leadCity)?.leadCity ?? null
-      const leadId = sorted.findLast((m) => m.leadId)?.leadId ?? null
-      return { peer, leadId, leadName, leadCity, messages: sorted, lastMessage, hasUnread }
-    })
-    .sort(
-      (a, b) =>
-        new Date(b.lastMessage.createdAt).getTime() - new Date(a.lastMessage.createdAt).getTime(),
+  const conversations = Array.from(map.entries()).map(([threadKey, messages]) => {
+    const sorted = [...messages].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     )
+    const lastMessage = sorted[sorted.length - 1]!
+    const lastOutIdx = sorted.findLastIndex((m) => m.direction === 'outbound')
+    const hasUnread = sorted.some((m, i) => m.direction === 'inbound' && i > lastOutIdx)
+    const leadName = sorted.findLast((m) => m.leadName)?.leadName ?? null
+    const leadCity = sorted.findLast((m) => m.leadCity)?.leadCity ?? null
+    const leadId = sorted.findLast((m) => m.leadId)?.leadId ?? null
+    const peer = pickBestWaPeer(sorted)
+    return { threadKey, peer, leadId, leadName, leadCity, messages: sorted, lastMessage, hasUnread }
+  })
+  return mergeLeadAndDigitThreads(conversations)
 }
 
 const WA_STATUS_POLL_MS = 10_000
 
-export function WhatsAppInboxView({ onWorkLead, onBrowseLeads, onOpenCrm, onOpenSettings }: Props) {
+export function WhatsAppInboxView({
+  focusRequest = null,
+  onFocusConsumed,
+  onWorkLead,
+  onBrowseLeads,
+  onOpenCrm,
+  onOpenSettings,
+}: Props) {
   const { toast } = useToast()
   const [items, setItems] = useState<WaLogRow[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -107,12 +201,20 @@ export function WhatsAppInboxView({ onWorkLead, onBrowseLeads, onOpenCrm, onOpen
   const [sending, setSending] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [mobileShowThread, setMobileShowThread] = useState(false)
+  /** Full message list for the open thread (GET /log?waPeer=…); global feed alone truncates each chat. */
+  const [threadMessages, setThreadMessages] = useState<WaLogRow[] | null>(null)
+  const [threadLoading, setThreadLoading] = useState(false)
+  /** When false, inbound rows are not written — dashboard shows outbounds only. */
+  const [inboundLogEnabled] = useState(true)
+  /** Only show spinner when switching chats — not on every global log poll (`items` refresh). */
+  const threadPeerKeyRef = useRef<string>('')
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true
     if (!silent) setLoading(true)
     try {
-      const res = await authFetch(apiUrl('/api/outreach/log?channel=whatsapp&limit=150'))
+      /** Global feed only — each thread’s full history is loaded separately when you open it. */
+      const res = await authFetch(apiUrl('/api/outreach/log?channel=whatsapp&limit=200'))
       if (!res.ok) {
         setError(`HTTP ${res.status}`)
         setItems([])
@@ -132,6 +234,10 @@ export function WhatsAppInboxView({ onWorkLead, onBrowseLeads, onOpenCrm, onOpen
     }
   }, [])
 
+  const conversations = groupByConversation(items)
+  const activeConvo = activePeer ? conversations.find((c) => c.peer === activePeer) ?? null : null
+  const activeLeadId = activeConvo?.leadId ?? null
+
   const fetchWaStatus = useCallback(async () => {
     try {
       const res = await authFetch(apiUrl('/api/outreach/whatsapp/status'))
@@ -144,6 +250,46 @@ export function WhatsAppInboxView({ onWorkLead, onBrowseLeads, onOpenCrm, onOpen
   }, [])
 
   useEffect(() => { void load() }, [load])
+
+  useEffect(() => {
+    if (!activePeer) {
+      setThreadMessages(null)
+      setThreadLoading(false)
+      threadPeerKeyRef.current = ''
+      return
+    }
+    const peerKey = `${activePeer}\0${activeLeadId ?? ''}`
+    const peerSwitched = threadPeerKeyRef.current !== peerKey
+    threadPeerKeyRef.current = peerKey
+    if (peerSwitched) setThreadLoading(true)
+
+    let cancelled = false
+    const params = new URLSearchParams({
+      channel: 'whatsapp',
+      waPeer: activePeer,
+      limit: '500',
+      order: 'asc',
+    })
+    if (activeLeadId) params.set('leadId', activeLeadId)
+    void (async () => {
+      try {
+        const res = await authFetch(apiUrl(`/api/outreach/log?${params}`))
+        if (!res.ok) {
+          if (!cancelled) setThreadMessages(null)
+          return
+        }
+        const data = (await res.json()) as { items?: WaLogRow[] }
+        if (!cancelled) setThreadMessages(data.items ?? [])
+      } catch {
+        if (!cancelled) setThreadMessages(null)
+      } finally {
+        if (!cancelled && peerSwitched) setThreadLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [activePeer, activeLeadId, items])
 
   useEffect(() => {
     void fetchWaStatus()
@@ -162,12 +308,42 @@ export function WhatsAppInboxView({ onWorkLead, onBrowseLeads, onOpenCrm, onOpen
     return () => window.clearInterval(id)
   }, [load])
 
-  const conversations = groupByConversation(items)
-  const activeConvo = activePeer ? conversations.find((c) => c.peer === activePeer) ?? null : null
-
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [activeConvo?.messages.length])
+    if (!focusRequest) return
+    if (loading) return
+    const { leadId, phoneDigits } = focusRequest
+    const norm = (phoneDigits ?? '').replace(/\D/g, '')
+    let peer: string | null = null
+    if (conversations.length > 0) {
+      if (leadId) {
+        const byLead = conversations.find((c) => c.leadId === leadId)
+        if (byLead) peer = byLead.peer
+      }
+      if (!peer && norm.length >= 10) {
+        const byPhone = conversations.find((c) => {
+          const d = extractPhone(c.peer)
+          return d === norm || d.endsWith(norm.slice(-10)) || norm.endsWith(d.slice(-10))
+        })
+        if (byPhone) peer = byPhone.peer
+      }
+    }
+    if (peer) {
+      setActivePeer(peer)
+      setMobileShowThread(true)
+    } else {
+      toast(
+        'Пока нет переписки с этим номером в ленте. Отправьте сообщение из CRM кнопкой «Отправить сейчас» (Baileys), затем откройте снова.',
+        'info',
+      )
+    }
+    onFocusConsumed?.()
+  }, [focusRequest, loading, conversations, toast, onFocusConsumed])
+
+  /** Scroll only when switching threads — not on every 12s poll (smooth scroll was fighting nested scroll + felt “stuck”). */
+  useEffect(() => {
+    if (!activePeer) return
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
+  }, [activePeer])
 
   const sendReply = useCallback(async () => {
     if (!activeConvo) return
@@ -186,6 +362,7 @@ export function WhatsAppInboxView({ onWorkLead, onBrowseLeads, onOpenCrm, onOpen
       toast('Сообщение отправлено', 'success')
       setReplyText('')
       await load({ silent: true })
+      requestAnimationFrame(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }))
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Не удалось отправить', 'error')
     } finally {
@@ -207,7 +384,7 @@ export function WhatsAppInboxView({ onWorkLead, onBrowseLeads, onOpenCrm, onOpen
         : { dot: 'bg-red-400', label: 'Отключено', border: 'border-red-500/30 text-red-200/90' }
 
   return (
-    <div className="animate-fade-in max-w-7xl space-y-5">
+    <div className="animate-fade-in max-w-7xl space-y-5 flex flex-col min-h-0 max-h-[calc(100dvh-7rem)]">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -253,11 +430,22 @@ export function WhatsAppInboxView({ onWorkLead, onBrowseLeads, onOpenCrm, onOpen
           {warning}
         </p>
       )}
+      {!inboundLogEnabled && (
+        <p
+          className="text-sm text-rose-200/95 rounded-xl border border-rose-500/30 bg-rose-950/40 px-4 py-3 leading-relaxed"
+          role="status"
+        >
+          Входящие сообщения <strong className="font-semibold">не пишутся в базу</strong> (отключено:
+          WHATSAPP_INBOUND_LOG). В самом WhatsApp переписка полная; здесь в ленте вы увидите в основном
+          исходящие. Установите WHATSAPP_INBOUND_LOG=true (или оставьте по умолчанию при Baileys) и перезапустите workers.
+        </p>
+      )}
 
+      <div className="flex flex-1 flex-col min-h-0">
       {/* Two-column layout */}
-      <div className="rounded-2xl border border-white/[0.08] bg-slate-950/50 shadow-[0_24px_80px_-24px_rgba(0,0,0,0.7)] overflow-hidden flex min-h-[min(72vh,640px)]">
+      <div className="rounded-2xl border border-white/[0.08] bg-slate-950/50 shadow-[0_24px_80px_-24px_rgba(0,0,0,0.7)] overflow-hidden flex flex-1 min-h-0">
         {/* Left panel — conversation list */}
-        <div className={`${mobileShowThread ? 'hidden lg:flex' : 'flex'} w-full lg:w-80 shrink-0 border-r border-white/[0.06] bg-[#070b14]/90 flex-col`}>
+        <div className={`${mobileShowThread ? 'hidden lg:flex' : 'flex'} w-full lg:w-80 shrink-0 border-r border-white/[0.06] bg-[#070b14]/90 flex-col min-h-0`}>
           <div className="px-4 py-3 border-b border-white/[0.06] flex items-center gap-2">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#25D366]/15 text-[#25D366]">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -268,7 +456,7 @@ export function WhatsAppInboxView({ onWorkLead, onBrowseLeads, onOpenCrm, onOpen
             <span className="text-xs text-slate-600 ml-auto tabular-nums">{conversations.length}</span>
           </div>
 
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable]">
             {loading ? (
               <p className="py-16 text-center text-sm text-slate-500">Загрузка…</p>
             ) : conversations.length === 0 ? (
@@ -283,7 +471,7 @@ export function WhatsAppInboxView({ onWorkLead, onBrowseLeads, onOpenCrm, onOpen
                   const lastBody = convo.lastMessage.body
                   const isLastInbound = convo.lastMessage.direction === 'inbound'
                   return (
-                    <li key={convo.peer}>
+                    <li key={convo.threadKey}>
                       <button
                         type="button"
                         onClick={() => selectConvo(convo.peer)}
@@ -337,7 +525,7 @@ export function WhatsAppInboxView({ onWorkLead, onBrowseLeads, onOpenCrm, onOpen
         </div>
 
         {/* Right panel — message thread */}
-        <div className={`${mobileShowThread ? 'flex' : 'hidden lg:flex'} flex-1 flex-col min-w-0 bg-gradient-to-b from-[#0c1220] to-[#080c14]`}>
+        <div className={`${mobileShowThread ? 'flex' : 'hidden lg:flex'} flex-1 flex-col min-w-0 min-h-0 bg-gradient-to-b from-[#0c1220] to-[#080c14]`}>
           {activeConvo ? (
             <>
               {/* Thread header */}
@@ -372,45 +560,51 @@ export function WhatsAppInboxView({ onWorkLead, onBrowseLeads, onOpenCrm, onOpen
                 )}
               </div>
 
-              {/* Messages */}
-              <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6">
-                <ul className="space-y-3 max-w-2xl mx-auto">
-                  {activeConvo.messages.map((row) => {
-                    const inbound = row.direction === 'inbound'
-                    return (
-                      <li key={row.id} className={`flex ${inbound ? 'justify-start' : 'justify-end'}`}>
-                        <div
-                          className={`max-w-[min(85%,28rem)] rounded-2xl px-4 py-2.5 shadow-lg ${
-                            inbound
-                              ? 'rounded-tl-md bg-slate-800/90 border border-white/[0.08] text-slate-200'
-                              : 'rounded-tr-md bg-emerald-950/80 border border-emerald-500/25 text-emerald-50'
-                          }`}
-                        >
-                          {row.body ? (
-                            <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{row.body}</p>
-                          ) : (
-                            <p className="text-sm text-slate-500 italic">Без текста</p>
-                          )}
-                          <div className={`flex items-center gap-1.5 mt-1 ${inbound ? '' : 'justify-end'}`}>
-                            <span className="text-[10px] tabular-nums text-slate-500">
-                              {formatTime(row.createdAt)}
-                            </span>
-                            {row.status && row.status !== 'logged' && (
-                              <>
-                                <span className="text-[10px] text-slate-600">·</span>
-                                <span className="text-[10px] text-slate-500">{row.status}</span>
-                              </>
-                            )}
-                            {!inbound && (
-                              <StatusCheck status={row.status} />
-                            )}
-                          </div>
-                        </div>
-                      </li>
-                    )
-                  })}
-                </ul>
-                <div ref={messagesEndRef} />
+              {/* Messages — threadMessages from GET /log?waPeer=… (full history); sidebar feed alone capped globally */}
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain px-4 py-4 sm:px-6 [scrollbar-gutter:stable]">
+                {threadLoading && threadMessages === null ? (
+                  <p className="text-center text-sm text-slate-500 py-12">Загрузка переписки…</p>
+                ) : (
+                  <>
+                    <ul className="space-y-3 max-w-2xl mx-auto">
+                      {(threadMessages !== null ? threadMessages : activeConvo.messages).map((row) => {
+                        const inbound = row.direction === 'inbound'
+                        return (
+                          <li key={row.id} className={`flex ${inbound ? 'justify-start' : 'justify-end'}`}>
+                            <div
+                              className={`max-w-[min(85%,28rem)] rounded-2xl px-4 py-2.5 shadow-lg ${
+                                inbound
+                                  ? 'rounded-tl-md bg-slate-800/90 border border-white/[0.08] text-slate-200'
+                                  : 'rounded-tr-md bg-emerald-950/80 border border-emerald-500/25 text-emerald-50'
+                              }`}
+                            >
+                              {row.body ? (
+                                <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{row.body}</p>
+                              ) : (
+                                <p className="text-sm text-slate-500 italic">Без текста</p>
+                              )}
+                              <div className={`flex items-center gap-1.5 mt-1 ${inbound ? '' : 'justify-end'}`}>
+                                <span className="text-[10px] tabular-nums text-slate-500">
+                                  {formatTime(row.createdAt)}
+                                </span>
+                                {row.status && row.status !== 'logged' && (
+                                  <>
+                                    <span className="text-[10px] text-slate-600">·</span>
+                                    <span className="text-[10px] text-slate-500">{row.status}</span>
+                                  </>
+                                )}
+                                {!inbound && (
+                                  <StatusCheck status={row.status} />
+                                )}
+                              </div>
+                            </div>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                    <div ref={messagesEndRef} />
+                  </>
+                )}
               </div>
 
               {/* Reply bar */}
@@ -439,8 +633,8 @@ export function WhatsAppInboxView({ onWorkLead, onBrowseLeads, onOpenCrm, onOpen
                       {sending ? 'Отправка…' : 'Отправить'}
                     </button>
                   </div>
-                  <p className="text-[10px] text-slate-600 mt-1.5 max-w-2xl mx-auto">
-                    Отправка на {extractPhone(activeConvo.peer)}
+                  <p className="text-[10px] text-slate-600 mt-1.5 max-w-2xl mx-auto leading-snug">
+                    На номер {extractPhone(activeConvo.peer) || '…'} · очередь Redis и пауза между исходящими на tenant (часто ~30–90 с) — так задумано
                   </p>
                 </div>
               )}
@@ -460,6 +654,7 @@ export function WhatsAppInboxView({ onWorkLead, onBrowseLeads, onOpenCrm, onOpen
             </div>
           )}
         </div>
+      </div>
       </div>
     </div>
   )

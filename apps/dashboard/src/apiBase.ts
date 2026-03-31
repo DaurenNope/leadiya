@@ -1,8 +1,8 @@
-import { supabase } from './lib/supabase'
+import { isSupabaseConfigured, supabase } from './lib/supabase'
 
 /**
  * Base URL for REST calls. Empty = same-origin (Vite dev proxy or nginx /api proxy).
- * Set at build time: VITE_PUBLIC_API_ORIGIN=https://your-api.example.com
+ * Set at build time if API is on another host, e.g. VITE_PUBLIC_API_ORIGIN=https://api.rahmetlabs.com
  */
 const raw = import.meta.env.VITE_PUBLIC_API_ORIGIN?.replace(/\/$/, '') ?? ''
 
@@ -26,10 +26,12 @@ export function apiReachabilityUrl(): string {
  * Falls back to plain fetch when no session is active (e.g. AUTH_BYPASS dev mode).
  */
 export async function authFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-  const { data: { session } } = await supabase.auth.getSession()
   const headers = new Headers(init?.headers)
-  if (session?.access_token) {
-    headers.set('Authorization', `Bearer ${session.access_token}`)
+  if (isSupabaseConfigured) {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session?.access_token) {
+      headers.set('Authorization', `Bearer ${session.access_token}`)
+    }
   }
   return fetch(input, { ...init, headers })
 }

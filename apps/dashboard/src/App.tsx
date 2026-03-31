@@ -6,6 +6,7 @@ import { SettingsView } from './components/SettingsView'
 import { ScrapersView } from './components/ScrapersView'
 import { CrmView } from './components/CrmView'
 import { WhatsAppInboxView } from './components/WhatsAppInboxView'
+import { OutreachScriptsView } from './components/OutreachScriptsView'
 import { LeadSidePanel } from './components/LeadSidePanel'
 import { ScraperRunBanner } from './components/ScraperRunBanner'
 import { OverviewView } from './components/OverviewView'
@@ -16,7 +17,15 @@ import { useExtensionStatus } from './context/ExtensionStatusContext'
 import type { Lead } from './types'
 import { apiUrl, authFetch } from './apiBase'
 
-type View = 'home' | 'intelligence' | 'crm' | 'whatsapp' | 'scrapers' | 'operations' | 'system'
+type View =
+  | 'home'
+  | 'intelligence'
+  | 'crm'
+  | 'whatsapp'
+  | 'outreach-scripts'
+  | 'scrapers'
+  | 'operations'
+  | 'system'
 
 type ScraperRun = {
   id: string
@@ -84,6 +93,8 @@ export default function App() {
   /** When set, Leads list filters to leads saved under this 2GIS run (raw_data). */
   const [leadsScraperRunFilter, setLeadsScraperRunFilter] = useState<string | null>(null)
   const [waConnStatus, setWaConnStatus] = useState<WaConnStatus | null>(null)
+  /** After opening CRM → WhatsApp, try to select this thread in the inbox. */
+  const [waInboxFocus, setWaInboxFocus] = useState<{ leadId?: string; phoneDigits?: string } | null>(null)
   const mainScrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -157,6 +168,10 @@ export default function App() {
 
   const handleCrmSeedConsumed = useCallback(() => {
     setCrmSeedLeadId(null)
+  }, [])
+
+  const clearWaInboxFocus = useCallback(() => {
+    setWaInboxFocus(null)
   }, [])
 
   /** Watch: pin banner, jump to leads list filtered by this run, scroll up. */
@@ -274,6 +289,19 @@ export default function App() {
             </svg>
           ),
         },
+        {
+          id: 'outreach-scripts',
+          label: 'Скрипты',
+          icon: (
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6" />
+              <path d="M16 13H8" />
+              <path d="M16 17H8" />
+              <path d="M10 9H8" />
+            </svg>
+          ),
+        },
       ],
     },
     {
@@ -319,11 +347,13 @@ export default function App() {
           ? 'CRM'
           : view === 'whatsapp'
             ? 'WhatsApp'
-            : view === 'scrapers'
-              ? 'Задачи 2GIS'
-              : view === 'operations'
-                ? 'Расширение'
-                : 'Настройки'
+            : view === 'outreach-scripts'
+              ? 'Скрипты'
+              : view === 'scrapers'
+                ? 'Задачи 2GIS'
+                : view === 'operations'
+                  ? 'Расширение'
+                  : 'Настройки'
 
   if (authLoading) {
     return (
@@ -551,7 +581,9 @@ export default function App() {
                     ? 'Выберите компанию и отправьте сообщение через WhatsApp или почту.'
                     : view === 'whatsapp'
                       ? 'Все диалоги WhatsApp: входящие и исходящие.'
-                      : view === 'scrapers'
+                      : view === 'outreach-scripts'
+                        ? 'Редактирование цепочек рассылок для вашей организации; без tenant доступ закрыт.'
+                        : view === 'scrapers'
                         ? 'Запуски сбора данных с 2GIS и их статусы.'
                         : view === 'operations'
                           ? 'Статус подключения расширения Chrome для автоматического сбора.'
@@ -602,7 +634,10 @@ export default function App() {
               onOpenExtension={() => setView('operations')}
               onOpenCrm={() => setView('crm')}
               onOpenDiscovery={() => setIsDiscoveryOpen(true)}
-              onOpenWhatsApp={() => setView('whatsapp')}
+              onOpenWhatsApp={() => {
+                setWaInboxFocus(null)
+                setView('whatsapp')
+              }}
             />
           )}
           {view === 'intelligence' && (
@@ -618,11 +653,16 @@ export default function App() {
               seedLeadId={crmSeedLeadId}
               onSeedConsumed={handleCrmSeedConsumed}
               onBrowseLeads={() => setView('intelligence')}
-              onOpenWhatsApp={() => setView('whatsapp')}
+              onOpenWhatsApp={(opts) => {
+                setWaInboxFocus(opts ?? null)
+                setView('whatsapp')
+              }}
             />
           )}
           {view === 'whatsapp' && (
             <WhatsAppInboxView
+              focusRequest={waInboxFocus}
+              onFocusConsumed={clearWaInboxFocus}
               onWorkLead={(id) => {
                 setCrmSeedLeadId(id)
                 setView('crm')
@@ -635,6 +675,7 @@ export default function App() {
               onOpenSettings={() => setView('system')}
             />
           )}
+          {view === 'outreach-scripts' && <OutreachScriptsView />}
           {view === 'scrapers' && (
             <ScrapersView
               onOpenDiscovery={() => setIsDiscoveryOpen(true)}

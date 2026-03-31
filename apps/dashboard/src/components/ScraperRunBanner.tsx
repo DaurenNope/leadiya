@@ -244,16 +244,26 @@ export function ScraperRunBanner({ runId, onDismiss, onRunFinished, onOpenLeadLi
               <div className="rounded-xl border border-white/[0.07] bg-slate-950/50 px-4 py-3">
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   <span className="text-2xl font-semibold tabular-nums text-white">{run?.resultsCount ?? 0}</span>
-                  <span className="text-sm text-slate-400">новых</span>
+                  <span className="text-sm text-slate-400">
+                    сохранено в БД <span className="text-slate-600">(вставка или обновление)</span>
+                  </span>
                   <span className="text-slate-600 hidden sm:inline">·</span>
                   <span className="text-sm tabular-nums text-slate-300">{formatElapsed(run?.startedAt ?? null)}</span>
                 </div>
                 <p className="text-[13px] text-slate-500 mt-2 leading-snug">
-                  <span className="text-slate-400 tabular-nums">{run?.detailAttempts ?? 0}</span> карточек ·{' '}
-                  <span className="text-slate-400 tabular-nums">{run?.totalSkipped ?? 0}</span> дублей ·{' '}
-                  <span className="tabular-nums">{savedPerMinRunning}</span> нов/мин ·{' '}
-                  <span className="tabular-nums">{attemptsPerMinRunning}</span> карт/мин
+                  <span className="text-slate-400 tabular-nums">{run?.detailAttempts ?? 0}</span> карточек обработано ·{' '}
+                  <span className="text-slate-400 tabular-nums">{run?.totalSkipped ?? 0}</span> дублей по URL ·{' '}
+                  <span className="tabular-nums">{savedPerMinRunning}</span> сохр./мин <span className="text-slate-600">(средн.)</span> ·{' '}
+                  <span className="tabular-nums">{attemptsPerMinRunning}</span> карт/мин <span className="text-slate-600">(средн.)</span>
                 </p>
+                {(run?.resultsCount ?? 0) === 0 && (run?.detailAttempts ?? 0) > 0 ? (
+                  <p className="text-[12px] text-amber-200/90 mt-2 leading-snug rounded-lg border border-amber-500/25 bg-amber-950/35 px-3 py-2">
+                    <strong className="text-amber-100">Почему 0 «сохранено»:</strong> после открытия карточки лид не записался (дубль по имени+городу,
+                    ошибка БД) или счётчик не успел обновиться (редко — в логе API{' '}
+                    <code className="text-amber-200/80">results_count bump failed</code>). Дубль по URL отсекается до карточки и не попадает сюда.
+                    Список лидов ниже может быть без фильтра по запуску или с другими задачами.
+                  </p>
+                ) : null}
                 {(run?.currentSlice || run?.totalSlices) ? (
                   <p className="text-[12px] text-slate-500 mt-1.5 leading-snug">
                     Сейчас:{' '}
@@ -294,8 +304,13 @@ export function ScraperRunBanner({ runId, onDismiss, onRunFinished, onOpenLeadLi
                 </summary>
                 <div className="mt-2 text-slate-500 space-y-1.5 border-l border-white/10 pl-3">
                   <p>
-                    Статус <strong className="text-slate-400">готово</strong> — когда отработаны все срезы города×категории. «Новых» — только
-                    вставки в БД; дубликаты по URL не увеличивают этот счётчик.
+                    Статус <strong className="text-slate-400">готово</strong> — когда отработаны все срезы города×категории.{' '}
+                    <strong className="text-slate-400">Сохранено в БД</strong> — число успешных записей (вставка или обновление лида по детерминированному
+                    id). Дубль по URL отфильтровывается до открытия карточки; дубль по имени+городу — после парсинга (счётчик карточек растёт, сохранений нет).
+                  </p>
+                  <p>
+                    <strong className="text-slate-400">Сохр./мин</strong> — среднее с момента старта запуска (не «в последнюю минуту»). Низкое при большом
+                    числе карточек обычно значит много отсечённых дублей или долгий простой между сохранениями.
                   </p>
                   <p>
                     Поиск 2GIS идёт по страницам; срез заканчивается после нескольких пустых страниц подряд. Долгое плато без движения карточек/дублей

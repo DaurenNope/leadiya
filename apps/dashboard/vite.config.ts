@@ -68,6 +68,8 @@ export default defineConfig(({ mode }) => {
   } as const
 
   return {
+    /** Monorepo: env lives in repo-root `.env` (same as API). Default `envDir` is `apps/dashboard`, so `VITE_*` was never loaded → blank Supabase client in the browser. */
+    envDir: repoRoot,
     define: {
       /** Dev-only: actual proxy target (may differ from default if .env overrides). */
       __LEADIYA_DEV_PROXY_TARGET__: JSON.stringify(mode === 'development' ? apiOrigin : ''),
@@ -76,6 +78,8 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [react(), tailwindcss()],
     server: {
+      /** Bind IPv4 + LAN; default `localhost` on some macOS/Node stacks is IPv6-only, so `127.0.0.1:5173` would refuse connections. */
+      host: true,
       port: devPorts.viteDevPort,
       strictPort: false,
       proxy: { ...apiProxy },
