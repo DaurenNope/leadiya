@@ -314,7 +314,7 @@ A **502** is from your **edge proxy** (nginx, Cloudflare, hostinger, etc.): it t
 
 - **Docker dashboard image (before this repo change):** nginx served only static files — `/api` had no upstream → 502. Rebuild the dashboard stage or use `docker compose` from this repo.
 - **Local dev:** run `npm run dev:web` (or `npm run dev`) so Vite (5173) and the API run; Vite proxies `/api` to `LEADIYA_API_ORIGIN` (default **http://localhost:3041**). If the API isn’t running or another app took that port, you’ll see failed fetch / a red banner.
-- **Split domains:** build the dashboard with `VITE_PUBLIC_API_ORIGIN=https://your-api-host` so the browser calls the API directly (CORS is enabled on Hono).
+- **Split domains:** build the dashboard with `VITE_PUBLIC_API_ORIGIN=https://api.rahmetlabs.com` (or your API host) so the browser calls the API directly (CORS is enabled on Hono; set `DASHBOARD_URL=https://app.rahmetlabs.com` on the API).
 
 ---
 

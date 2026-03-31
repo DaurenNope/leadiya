@@ -128,9 +128,9 @@ Dashboard: http://YOUR_VPS_IP:8080
 ## 8. Domain + SSL (Cloudflare)
 
 1. Buy domain or add subdomain in Cloudflare
-2. Add A record: `app.yourdomain.com` → VPS IP (proxied)
+2. Add A record: `app.rahmetlabs.com` → VPS IP (proxied)
 3. SSL mode: Full (strict) — Cloudflare handles HTTPS automatically
-4. Dashboard is now at: `https://app.yourdomain.com`
+4. Dashboard is now at: `https://app.rahmetlabs.com`
 
 ## 9. Auto-Deploy on Push
 
