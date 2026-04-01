@@ -29,6 +29,7 @@ type Status = {
   sessionCount: number
   lastSyncTime: string | null
   queueSize: number
+  deadLetterCount?: number
   flushFailures?: number
   lastError?: string | null
   recentEvents?: EventItem[]
@@ -433,6 +434,29 @@ export default function App() {
     })
   }
 
+  const handleRetryDeadLetters = () => {
+    chrome.runtime.sendMessage({ action: 'retryDeadLetters' }, (r) => {
+      if (r?.ok) {
+        flash(`Повтор queued: ${r.count || 0}`, true)
+        refreshStatus()
+      } else {
+        flash(r?.error || 'Не удалось отправить dead-letter в очередь', false)
+      }
+    })
+  }
+
+  const handleClearDeadLetters = () => {
+    if (!window.confirm('Очистить dead-letter записи без повторной отправки?')) return
+    chrome.runtime.sendMessage({ action: 'clearDeadLetters' }, (r) => {
+      if (r?.ok) {
+        flash('Dead-letter очищен', true)
+        refreshStatus()
+      } else {
+        flash(r?.error || 'Не удалось очистить dead-letter', false)
+      }
+    })
+  }
+
   return (
     <div className="ly-app">
       <header className="ly-header">
@@ -536,6 +560,21 @@ export default function App() {
                   <span className="ly-stat-label">В очереди</span>
                 </div>
               </div>
+              {(status.deadLetterCount ?? 0) > 0 ? (
+                <div className="ly-dead-letter-strip">
+                  <span>
+                    Dead-letter: <strong>{status.deadLetterCount}</strong>
+                  </span>
+                  <div className="ly-inline-row">
+                    <button type="button" className="ly-btn ly-btn--ghost" onClick={handleRetryDeadLetters}>
+                      Повторить
+                    </button>
+                    <button type="button" className="ly-btn ly-btn--ghost" onClick={handleClearDeadLetters}>
+                      Очистить
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               {status.bulkRunning ? (
                 <div className="ly-bulk-msg">
                   Фоновый режим: можно закрыть это окно — сбор продолжится.
@@ -861,6 +900,12 @@ export default function App() {
                   <span style={{ color: 'var(--ly-muted)' }}>Ошибки отправки</span>
                   <strong style={{ color: status.flushFailures ? '#fca5a5' : 'var(--ly-success)' }}>
                     {status.flushFailures ?? 0}
+                  </strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 6 }}>
+                  <span style={{ color: 'var(--ly-muted)' }}>Dead-letter</span>
+                  <strong style={{ color: (status.deadLetterCount ?? 0) > 0 ? '#fbbf24' : 'var(--ly-success)' }}>
+                    {status.deadLetterCount ?? 0}
                   </strong>
                 </div>
               </div>

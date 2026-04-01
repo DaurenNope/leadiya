@@ -3,6 +3,8 @@ import { normalizeApiOrigin } from '../lead-queue'
 import { rowFromLeadForSheets } from './sheets-rows'
 import type { LeadPayload, QueuedLead, SinkId } from '../lead-types'
 import type { SinkSettings } from '../sink-settings'
+import { pushDeadLetterFromQueue } from './dead-letter'
+import { maxRetriesForSink, nextBackoffMs } from './retry-policy'
 
 async function hmacSha256Hex(secret: string, body: string): Promise<string> {
   const enc = new TextEncoder()
@@ -150,7 +152,56 @@ function cloneQueue(queue: QueuedLead[]): QueuedLead[] {
   return queue.map((q) => ({
     ...q,
     delivered: { ...q.delivered },
+    deliveryMeta: { ...(q.deliveryMeta || {}) },
   }))
+}
+
+function isReadyForSink(q: QueuedLead, sink: SinkId, now: number): boolean {
+  const meta = q.deliveryMeta?.[sink]
+  if (!meta?.nextEligibleAt) return true
+  return meta.nextEligibleAt <= now
+}
+
+function markSinkFailure(remaining: QueuedLead[], sink: SinkId, error: string, now: number): QueuedLead[] {
+  return remaining.map((q) => {
+    if (q.delivered[sink] || !isReadyForSink(q, sink, now)) return q
+    const prev = q.deliveryMeta?.[sink]
+    const attempts = (prev?.attempts || 0) + 1
+    return {
+      ...q,
+      deliveryMeta: {
+        ...(q.deliveryMeta || {}),
+        [sink]: {
+          attempts,
+          nextEligibleAt: now + nextBackoffMs(sink, attempts),
+          lastError: error,
+        },
+      },
+    }
+  })
+}
+
+async function moveExhaustedToDeadLetters(
+  remaining: QueuedLead[],
+  enabledSinks: SinkId[],
+  onEvent: (level: 'info' | 'warn' | 'error', message: string) => void
+): Promise<QueuedLead[]> {
+  const keep: QueuedLead[] = []
+  for (const q of remaining) {
+    const exhausted = enabledSinks.find((sink) => {
+      if (q.delivered[sink]) return false
+      const attempts = q.deliveryMeta?.[sink]?.attempts || 0
+      return attempts >= maxRetriesForSink(sink)
+    })
+    if (!exhausted) {
+      keep.push(q)
+      continue
+    }
+    const reason = q.deliveryMeta?.[exhausted]?.lastError || 'Delivery retries exhausted'
+    await pushDeadLetterFromQueue(q, exhausted, reason)
+    onEvent('warn', `Dead-letter: ${q.lead.name} (${exhausted})`)
+  }
+  return keep
 }
 
 /** Returns updated queue after attempting each enabled sink. */
@@ -179,24 +230,28 @@ export async function flushAllSinks(
   }
 
   if (enabledSinks.includes('api') && apiOrigin) {
-    const pending = remaining.filter((q) => !q.delivered.api)
+    const nowMs = Date.now()
+    const pending = remaining.filter((q) => !q.delivered.api && isReadyForSink(q, 'api', nowMs))
     if (pending.length > 0) {
       const batch = pending.map((p) => p.lead)
       const r = await flushApiSink(batch, apiOrigin, settings.apiServiceKey)
       if (r.ok) {
         markDelivered('api', new Set(pending.map((p) => p.id)))
-        const now = new Date().toISOString()
-        ctx.lastSyncTimeSetter(now)
-        await chrome.storage.local.set({ lastSyncTime: now })
+        const syncedAt = new Date().toISOString()
+        ctx.lastSyncTimeSetter(syncedAt)
+        await chrome.storage.local.set({ lastSyncTime: syncedAt })
         ctx.onEvent('info', `API: отправлено ${batch.length}`)
       } else {
-        ctx.onEvent('error', `API: ${r.error || 'ошибка'}`)
+        const err = r.error || 'ошибка'
+        remaining = markSinkFailure(remaining, 'api', err, nowMs)
+        ctx.onEvent('error', `API: ${err}`)
       }
     }
   }
 
   if (enabledSinks.includes('webhook')) {
-    const pending = remaining.filter((q) => !q.delivered.webhook)
+    const now = Date.now()
+    const pending = remaining.filter((q) => !q.delivered.webhook && isReadyForSink(q, 'webhook', now))
     if (pending.length > 0) {
       const batch = pending.map((p) => p.lead)
       const r = await flushWebhookSink(batch, settings.webhookUrl, settings.webhookSecret)
@@ -204,13 +259,16 @@ export async function flushAllSinks(
         markDelivered('webhook', new Set(pending.map((p) => p.id)))
         ctx.onEvent('info', `Webhook: отправлено ${batch.length}`)
       } else {
-        ctx.onEvent('error', `Webhook: ${r.error || 'ошибка'}`)
+        const err = r.error || 'ошибка'
+        remaining = markSinkFailure(remaining, 'webhook', err, now)
+        ctx.onEvent('error', `Webhook: ${err}`)
       }
     }
   }
 
   if (enabledSinks.includes('sheets')) {
-    const pending = remaining.filter((q) => !q.delivered.sheets)
+    const now = Date.now()
+    const pending = remaining.filter((q) => !q.delivered.sheets && isReadyForSink(q, 'sheets', now))
     if (pending.length > 0) {
       const batch = pending.map((p) => p.lead)
       const range = settings.sheetsRange || 'Sheet1!A:A'
@@ -219,10 +277,14 @@ export async function flushAllSinks(
         markDelivered('sheets', new Set(pending.map((p) => p.id)))
         ctx.onEvent('info', `Sheets: добавлено ${batch.length} строк`)
       } else {
-        ctx.onEvent('error', `Sheets: ${r.error || 'ошибка'}`)
+        const err = r.error || 'ошибка'
+        remaining = markSinkFailure(remaining, 'sheets', err, now)
+        ctx.onEvent('error', `Sheets: ${err}`)
       }
     }
   }
+
+  remaining = await moveExhaustedToDeadLetters(remaining, enabledSinks, ctx.onEvent)
 
   return remaining.filter((q) => {
     for (const s of enabledSinks) {

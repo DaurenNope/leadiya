@@ -550,8 +550,26 @@
   align-items: stretch;
 }
 
+.ly-inline-row .ly-btn {
+  width: auto;
+}
+
 .ly-inline-row .ly-input {
   flex: 1;
+}
+
+.ly-dead-letter-strip {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  background: rgba(251, 191, 36, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #fde68a;
 }
 
 .ly-bulk-msg {

@@ -2,10 +2,11 @@ import { defineBackground } from 'wxt/utils/define-background'
 import { DEFAULT_LOCAL_API_ORIGIN } from '../lib/local-api-default'
 import { dashboardUrlFromApi } from '../lib/dashboard-url'
 import { leadsToCsv, leadsToJsonPretty } from '../lib/lead-export'
-import type { LeadPayload, QueuedLead } from '../lib/lead-types'
+import type { DeadLetterLead, LeadPayload, QueuedLead } from '../lib/lead-types'
 import { normalizeApiOrigin, pruneRecent, shouldEnqueueLead } from '../lib/lead-queue'
 import { loadSinkSettings } from '../lib/sink-settings'
 import { flushAllSinks } from '../lib/sinks/flush-sinks'
+import { clearDeadLetters, loadDeadLetters } from '../lib/sinks/dead-letter'
 import { collectWebsiteContacts, normalizeWebsiteUrl } from '../lib/website-follow'
 import { resolveCategory, resolveLeadCategory } from '../lib/category'
 import { resolveCity, resolveCityFromAddress } from '../lib/city'
@@ -51,6 +52,7 @@ function migrateQueue(raw: unknown): QueuedLead[] {
         id: String(q.id),
         lead: q.lead,
         delivered: { ...q.delivered },
+        deliveryMeta: { ...(q.deliveryMeta || {}) },
       })
       continue
     }
@@ -216,6 +218,11 @@ async function flushQueue(): Promise<{ inserted: number; skipped: number } | nul
 
   const processed = beforeLen - leadQueue.length
   return processed > 0 ? { inserted: processed, skipped: 0 } : null
+}
+
+async function getDeadLetterCount(): Promise<number> {
+  const dead = await loadDeadLetters()
+  return dead.length
 }
 
 function enqueueLead(lead: LeadPayload) {
@@ -668,23 +675,66 @@ export default defineBackground(() => {
     }
 
     if (message.action === 'getStatus') {
-      sendResponse({
-        sessionCount,
-        lastSyncTime,
-        queueSize: leadQueue.length,
-        flushFailures,
-        lastError,
-        recentEvents,
-        bulkRunning,
-        bulkDone,
-        bulkTotal,
-        autoCaptures,
-        lastAutoCaptureAt,
-        lastEnrichmentAt,
-        lastEnrichmentStatus,
-        cityMismatchCount,
-        lastCityMismatchAt,
+      getDeadLetterCount().then((deadLetterCount) => {
+        sendResponse({
+          sessionCount,
+          lastSyncTime,
+          queueSize: leadQueue.length,
+          deadLetterCount,
+          flushFailures,
+          lastError,
+          recentEvents,
+          bulkRunning,
+          bulkDone,
+          bulkTotal,
+          autoCaptures,
+          lastAutoCaptureAt,
+          lastEnrichmentAt,
+          lastEnrichmentStatus,
+          cityMismatchCount,
+          lastCityMismatchAt,
+        })
       })
+      return true
+    }
+
+    if (message.action === 'retryDeadLetters') {
+      loadDeadLetters()
+        .then((dead) => {
+          const byId = new Map<string, DeadLetterLead>()
+          for (const item of dead) {
+            if (!byId.has(item.id)) byId.set(item.id, item)
+          }
+          const items = Array.from(byId.values())
+          for (const item of items) {
+            leadQueue.push({
+              id: item.id,
+              lead: item.lead,
+              delivered: {},
+              deliveryMeta: {},
+            })
+          }
+          return clearDeadLetters().then(() => items.length)
+        })
+        .then((count) => {
+          schedulePersistQueue()
+          pushEvent('info', `Повтор dead-letter: ${count}`)
+          sendResponse({ ok: true, count })
+        })
+        .catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err)
+          sendResponse({ ok: false, error: msg })
+        })
+      return true
+    }
+
+    if (message.action === 'clearDeadLetters') {
+      clearDeadLetters()
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err)
+          sendResponse({ ok: false, error: msg })
+        })
       return true
     }
 
@@ -700,7 +750,7 @@ export default defineBackground(() => {
       lastEnrichmentStatus = 'idle'
       cityMismatchCount = 0
       lastCityMismatchAt = null
-      void chrome.storage.local.set({ sessionCount: 0, [PERSIST_QUEUE_KEY]: [] })
+      void chrome.storage.local.set({ sessionCount: 0, [PERSIST_QUEUE_KEY]: [] }).then(() => clearDeadLetters())
       sendResponse({ ok: true })
       return true
     }
