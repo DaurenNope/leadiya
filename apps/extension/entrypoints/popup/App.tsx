@@ -25,6 +25,12 @@ const CITY_SLUGS: Record<string, string> = {
 
 type PageType = { isFirm: boolean; isSearch: boolean; url: string }
 type EventItem = { at: string; level: 'info' | 'warn' | 'error'; message: string }
+type SinkHealthItem = {
+  status: 'idle' | 'ok' | 'error'
+  lastMessage: string
+  lastAt: string | null
+  retryPending: number
+}
 type Status = {
   sessionCount: number
   lastSyncTime: string | null
@@ -42,6 +48,11 @@ type Status = {
   lastEnrichmentStatus?: 'idle' | 'success' | 'warn'
   cityMismatchCount?: number
   lastCityMismatchAt?: string | null
+  sinkHealth?: {
+    api: SinkHealthItem
+    webhook: SinkHealthItem
+    sheets: SinkHealthItem
+  }
 }
 
 function Switch({ checked, onChange }: { checked: boolean; onChange: () => void }) {
@@ -393,6 +404,7 @@ export default function App() {
   const bulkDone = status.bulkDone ?? bulkProgress?.done ?? 0
   const bulkTotal = status.bulkTotal ?? bulkProgress?.total ?? 0
   const bulkPercent = bulkTotal > 0 ? (bulkDone / bulkTotal) * 100 : 0
+  const sinkHealth = status.sinkHealth
 
   const handleCopyDiagnostics = () => {
     const payload = {
@@ -595,6 +607,36 @@ export default function App() {
                   </button>
                 </div>
               ) : null}
+            </section>
+
+            <section className="ly-section">
+              <h2 className="ly-section-title">Каналы доставки</h2>
+              <div className="ly-sink-grid">
+                {[
+                  ['api', 'CRM API'],
+                  ['webhook', 'Webhook'],
+                  ['sheets', 'Google Sheets'],
+                ].map(([key, title]) => {
+                  const item = sinkHealth?.[key as keyof typeof sinkHealth]
+                  const statusClass =
+                    item?.status === 'ok' ? 'ly-sink-card--ok' : item?.status === 'error' ? 'ly-sink-card--err' : ''
+                  const statusLabel =
+                    item?.status === 'ok' ? 'OK' : item?.status === 'error' ? 'Ошибка' : 'Ожидание'
+                  return (
+                    <div key={key} className={`ly-sink-card ${statusClass}`}>
+                      <div className="ly-sink-head">
+                        <strong>{title}</strong>
+                        <span>{statusLabel}</span>
+                      </div>
+                      <div className="ly-sink-meta">
+                        <span>В retry: {item?.retryPending ?? 0}</span>
+                        <span>{item?.lastAt ? formatTime(item.lastAt) : '—'}</span>
+                      </div>
+                      <div className="ly-sink-msg">{item?.lastMessage || 'Пока нет событий по каналу'}</div>
+                    </div>
+                  )
+                })}
+              </div>
             </section>
 
             <section className="ly-section">

@@ -572,6 +572,62 @@
   color: #fde68a;
 }
 
+.ly-sink-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.ly-sink-card {
+  border: 1px solid var(--ly-border);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.ly-sink-card--ok {
+  border-color: rgba(52, 211, 153, 0.35);
+  background: rgba(52, 211, 153, 0.08);
+}
+
+.ly-sink-card--err {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.ly-sink-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.ly-sink-head span {
+  font-size: 10px;
+  color: var(--ly-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.ly-sink-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--ly-muted);
+  margin-bottom: 6px;
+}
+
+.ly-sink-msg {
+  font-size: 11px;
+  color: #cbd5e1;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .ly-bulk-msg {
   margin-top: 8px;
   padding: 8px 10px;

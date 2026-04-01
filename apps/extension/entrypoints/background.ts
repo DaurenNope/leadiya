@@ -7,6 +7,7 @@ import { normalizeApiOrigin, pruneRecent, shouldEnqueueLead } from '../lib/lead-
 import { loadSinkSettings } from '../lib/sink-settings'
 import { flushAllSinks } from '../lib/sinks/flush-sinks'
 import { clearDeadLetters, loadDeadLetters } from '../lib/sinks/dead-letter'
+import { applySinkEvent, defaultSinkHealth, withRetryPending } from '../lib/sinks/sink-health'
 import { collectWebsiteContacts, normalizeWebsiteUrl } from '../lib/website-follow'
 import { resolveCategory, resolveLeadCategory } from '../lib/category'
 import { resolveCity, resolveCityFromAddress } from '../lib/city'
@@ -39,6 +40,7 @@ let lastEnrichmentAt: string | null = null
 let lastEnrichmentStatus: 'idle' | 'success' | 'warn' = 'idle'
 let cityMismatchCount = 0
 let lastCityMismatchAt: string | null = null
+let sinkHealth = defaultSinkHealth()
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -200,6 +202,7 @@ async function flushQueue(): Promise<{ inserted: number; skipped: number } | nul
     settings,
     onEvent: (level, msg) => {
       if (level === 'error') hadError = true
+      sinkHealth = applySinkEvent(sinkHealth, level, msg)
       pushEvent(level, msg)
     },
     lastSyncTimeSetter: (iso) => {
@@ -676,6 +679,7 @@ export default defineBackground(() => {
 
     if (message.action === 'getStatus') {
       getDeadLetterCount().then((deadLetterCount) => {
+        const sinkHealthSnapshot = withRetryPending(sinkHealth, leadQueue)
         sendResponse({
           sessionCount,
           lastSyncTime,
@@ -693,6 +697,7 @@ export default defineBackground(() => {
           lastEnrichmentStatus,
           cityMismatchCount,
           lastCityMismatchAt,
+          sinkHealth: sinkHealthSnapshot,
         })
       })
       return true
@@ -750,6 +755,7 @@ export default defineBackground(() => {
       lastEnrichmentStatus = 'idle'
       cityMismatchCount = 0
       lastCityMismatchAt = null
+      sinkHealth = defaultSinkHealth()
       void chrome.storage.local.set({ sessionCount: 0, [PERSIST_QUEUE_KEY]: [] }).then(() => clearDeadLetters())
       sendResponse({ ok: true })
       return true
