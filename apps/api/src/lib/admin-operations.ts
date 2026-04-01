@@ -246,3 +246,67 @@ export function getOperationsSummarySync(): {
     defaultTenantConfigured: Boolean(process.env.DEFAULT_TENANT_ID?.trim()),
   }
 }
+
+export type DiscoverySliceSnapshot = {
+  sliceKey: string
+  staleRuns: number
+  cooldownUntilMs: number
+  cooldownLeftMs: number
+  lastRunAtMs: number | null
+  lastNewLeads: number | null
+}
+
+export async function getDiscoveryIntelligenceSnapshot(limit = 40): Promise<{
+  totalSlices: number
+  coolingSlices: number
+  staleSlices: number
+  top: DiscoverySliceSnapshot[]
+}> {
+  const r = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 1, connectTimeout: 5000, lazyConnect: true })
+  try {
+    await r.connect()
+    const keys: string[] = []
+    let cursor = '0'
+    do {
+      const [next, chunk] = await r.scan(cursor, 'MATCH', 'discovery:slice:*', 'COUNT', 200)
+      cursor = next
+      keys.push(...chunk)
+    } while (cursor !== '0')
+
+    const now = Date.now()
+    const rows: DiscoverySliceSnapshot[] = []
+    for (const key of keys) {
+      const raw = await r.hgetall(key)
+      const staleRuns = Number.parseInt(raw.staleRuns || '0', 10) || 0
+      const cooldownUntilMs = Number.parseInt(raw.cooldownUntilMs || '0', 10) || 0
+      const lastRunAtMs = Number.parseInt(raw.lastRunAtMs || '', 10)
+      const lastNewLeads = Number.parseInt(raw.lastNewLeads || '', 10)
+      rows.push({
+        sliceKey: key.replace(/^discovery:slice:/, ''),
+        staleRuns,
+        cooldownUntilMs,
+        cooldownLeftMs: Math.max(0, cooldownUntilMs - now),
+        lastRunAtMs: Number.isFinite(lastRunAtMs) ? lastRunAtMs : null,
+        lastNewLeads: Number.isFinite(lastNewLeads) ? lastNewLeads : null,
+      })
+    }
+
+    rows.sort((a, b) => {
+      if (b.staleRuns !== a.staleRuns) return b.staleRuns - a.staleRuns
+      return b.cooldownLeftMs - a.cooldownLeftMs
+    })
+
+    return {
+      totalSlices: rows.length,
+      coolingSlices: rows.filter((x) => x.cooldownLeftMs > 0).length,
+      staleSlices: rows.filter((x) => x.staleRuns > 0).length,
+      top: rows.slice(0, Math.max(1, Math.min(200, limit))),
+    }
+  } finally {
+    try {
+      await r.quit()
+    } catch {
+      /* */
+    }
+  }
+}
