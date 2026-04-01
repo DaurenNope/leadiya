@@ -11,6 +11,7 @@ const ctx = vi.hoisted(() => {
   vi.stubEnv('WHATSAPP_BAILEYS_ENABLED', 'false')
 
   const insertCalls: unknown[][] = []
+  let seenLead = false
 
   function makeSelectChain(result: unknown): PromiseLike<unknown> & Record<string, ReturnType<typeof vi.fn>> {
     const promise = Promise.resolve(result)
@@ -29,16 +30,24 @@ const ctx = vi.hoisted(() => {
   }
 
   const db = {
-    select: vi.fn((_cols?: unknown) => makeSelectChain([])),
+    select: vi.fn((_cols?: unknown) => {
+      const out = seenLead ? [{ id: '11111111-1111-1111-1111-111111111111' }] : []
+      return makeSelectChain(out)
+    }),
     insert: vi.fn((table: unknown) => ({
       values: vi.fn((vals: unknown) => {
         insertCalls.push([table, vals])
+        seenLead = true
         return {
           returning: vi.fn(() =>
             Promise.resolve([{ id: '11111111-1111-1111-1111-111111111111' }]),
           ),
           onConflictDoNothing: vi.fn(() => Promise.resolve()),
-          onConflictDoUpdate: vi.fn(() => Promise.resolve()),
+          onConflictDoUpdate: vi.fn(() => ({
+            returning: vi.fn(() =>
+              Promise.resolve([{ id: '11111111-1111-1111-1111-111111111111' }]),
+            ),
+          })),
         }
       }),
     })),
@@ -52,7 +61,7 @@ const ctx = vi.hoisted(() => {
     })),
   }
 
-  return { insertCalls, db }
+  return { insertCalls, db, seenLeadRef: () => seenLead, resetSeen: () => { seenLead = false } }
 })
 
 vi.mock('bullmq', () => ({
@@ -85,6 +94,7 @@ import { app } from './server.js'
 describe('Leads bulk', () => {
   beforeEach(() => {
     ctx.insertCalls.length = 0
+    ctx.resetSeen()
     vi.clearAllMocks()
   })
 
@@ -108,6 +118,9 @@ describe('Leads bulk', () => {
       }),
     })
     expect(first.status).toBe(200)
+    const firstJson = await first.json()
+    expect(Array.isArray(firstJson.results)).toBe(true)
+    expect(firstJson.results[0]?.status).toBe('inserted')
 
     const second = await app.request('/api/leads/bulk', {
       method: 'POST',
@@ -125,6 +138,9 @@ describe('Leads bulk', () => {
       }),
     })
     expect(second.status).toBe(200)
+    const secondJson = await second.json()
+    expect(Array.isArray(secondJson.results)).toBe(true)
+    expect(secondJson.results[0]?.status).toBe('duplicate')
 
     expect(ctx.insertCalls.length).toBeGreaterThan(0)
   })

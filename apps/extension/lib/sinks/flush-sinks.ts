@@ -39,7 +39,7 @@ async function flushApiSink(
   leads: LeadPayload[],
   apiUrl: string,
   serviceKey: string
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; inserted?: number; duplicate?: number; rejected?: number }> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   const trimmed = serviceKey.trim()
   if (trimmed) headers['X-Leadiya-Service-Key'] = trimmed
@@ -54,8 +54,18 @@ async function flushApiSink(
       const body = await resp.text()
       return { ok: false, error: `API ${resp.status}: ${body.slice(0, 200)}` }
     }
-    await resp.json()
-    return { ok: true }
+    const payload = await resp.json().catch(() => null)
+    const results = Array.isArray(payload?.results) ? payload.results : []
+    let inserted = 0
+    let duplicate = 0
+    let rejected = 0
+    for (const r of results) {
+      const status = String(r?.status || '')
+      if (status === 'inserted') inserted += 1
+      else if (status === 'duplicate') duplicate += 1
+      else if (status === 'rejected') rejected += 1
+    }
+    return { ok: true, inserted, duplicate, rejected }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
@@ -240,7 +250,10 @@ export async function flushAllSinks(
         const syncedAt = new Date().toISOString()
         ctx.lastSyncTimeSetter(syncedAt)
         await chrome.storage.local.set({ lastSyncTime: syncedAt })
-        ctx.onEvent('info', `API: отправлено ${batch.length}`)
+        const inserted = r.inserted ?? batch.length
+        const duplicate = r.duplicate ?? 0
+        const rejected = r.rejected ?? 0
+        ctx.onEvent('info', `API: inserted=${inserted} duplicate=${duplicate} rejected=${rejected}`)
       } else {
         const err = r.error || 'ошибка'
         remaining = markSinkFailure(remaining, 'api', err, nowMs)

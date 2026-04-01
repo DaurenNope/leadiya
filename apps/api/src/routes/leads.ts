@@ -52,6 +52,15 @@ const bulkSchema = z.object({
   leads: z.array(leadSchema).min(1).max(500),
 })
 
+type BulkItemResult = {
+  index: number
+  name: string
+  city: string
+  status: 'inserted' | 'duplicate' | 'rejected'
+  leadId?: string
+  reason?: string
+}
+
 leadsRouter.post('/bulk', async (c) => {
   const body = await c.req.json()
   const result = bulkSchema.safeParse(body)
@@ -66,8 +75,9 @@ leadsRouter.post('/bulk', async (c) => {
   let inserted = 0
   let skipped = 0
   const newLeadIds: string[] = []
+  const results: BulkItemResult[] = []
 
-  for (const item of result.data.leads) {
+  for (const [index, item] of result.data.leads.entries()) {
     const cleaned = sanitizeLeadPayload(item)
     const normalizedName = cleaned.name
     const city = cleaned.city
@@ -128,6 +138,13 @@ leadsRouter.post('/bulk', async (c) => {
       }
 
       skipped++
+      results.push({
+        index,
+        name: normalizedName,
+        city,
+        status: 'duplicate',
+        leadId: existingId,
+      })
       continue
     }
 
@@ -208,9 +225,23 @@ leadsRouter.post('/bulk', async (c) => {
       }
 
       inserted++
+      results.push({
+        index,
+        name: normalizedName,
+        city,
+        status: 'inserted',
+        leadId,
+      })
     } catch (err) {
       console.error(`[leads/bulk] Error inserting ${normalizedName}:`, err)
       skipped++
+      results.push({
+        index,
+        name: normalizedName,
+        city,
+        status: 'rejected',
+        reason: err instanceof Error ? err.message : String(err),
+      })
     }
   }
 
@@ -227,7 +258,7 @@ leadsRouter.post('/bulk', async (c) => {
     )
   }
 
-  return c.json({ inserted, skipped, enrichmentQueued: newLeadIds.length })
+  return c.json({ inserted, skipped, enrichmentQueued: newLeadIds.length, results })
 })
 
 export { leadsRouter }
