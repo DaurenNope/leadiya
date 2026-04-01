@@ -628,6 +628,36 @@
   text-overflow: ellipsis;
 }
 
+.ly-sink-chips {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ly-chip {
+  font-size: 10px;
+  border-radius: 999px;
+  padding: 3px 7px;
+  border: 1px solid var(--ly-border);
+  color: var(--ly-muted);
+  background: rgba(148, 163, 184, 0.1);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.ly-chip--ok {
+  color: #86efac;
+  border-color: rgba(52, 211, 153, 0.35);
+  background: rgba(52, 211, 153, 0.12);
+}
+
+.ly-chip--err {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.12);
+}
+
 .ly-bulk-msg {
   margin-top: 8px;
   padding: 8px 10px;

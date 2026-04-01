@@ -12,12 +12,23 @@ describe('sink-health helpers', () => {
 
   it('updates status from event level', () => {
     const h0 = defaultSinkHealth()
-    const h1 = applySinkEvent(h0, 'info', 'API: отправлено 1', '2026-01-01T00:00:00.000Z')
+    const h1 = applySinkEvent(h0, 'info', 'API: inserted=1 duplicate=2 rejected=3', '2026-01-01T00:00:00.000Z')
     expect(h1.api.status).toBe('ok')
     expect(h1.api.lastAt).toBe('2026-01-01T00:00:00.000Z')
+    expect(h1.api.lastInserted).toBe(1)
+    expect(h1.api.lastDuplicate).toBe(2)
+    expect(h1.api.lastRejected).toBe(3)
     const h2 = applySinkEvent(h1, 'error', 'API: timeout', '2026-01-01T00:00:01.000Z')
     expect(h2.api.status).toBe('error')
     expect(h2.api.lastMessage).toContain('timeout')
+  })
+
+  it('stores sent count for non-api sinks', () => {
+    const h0 = defaultSinkHealth()
+    const h1 = applySinkEvent(h0, 'info', 'Webhook: отправлено 12', '2026-01-01T00:00:00.000Z')
+    expect(h1.webhook.lastSent).toBe(12)
+    const h2 = applySinkEvent(h1, 'info', 'Sheets: добавлено 7 строк', '2026-01-01T00:00:00.000Z')
+    expect(h2.sheets.lastSent).toBe(7)
   })
 
   it('counts retry-pending queue items by sink', () => {

@@ -30,6 +30,10 @@ type SinkHealthItem = {
   lastMessage: string
   lastAt: string | null
   retryPending: number
+  lastSent?: number
+  lastInserted?: number
+  lastDuplicate?: number
+  lastRejected?: number
 }
 type Status = {
   sessionCount: number
@@ -633,6 +637,17 @@ export default function App() {
                         <span>{item?.lastAt ? formatTime(item.lastAt) : '—'}</span>
                       </div>
                       <div className="ly-sink-msg">{item?.lastMessage || 'Пока нет событий по каналу'}</div>
+                      {key === 'api' && item ? (
+                        <div className="ly-sink-chips">
+                          <span className="ly-chip ly-chip--ok">ins {item.lastInserted ?? 0}</span>
+                          <span className="ly-chip">dup {item.lastDuplicate ?? 0}</span>
+                          <span className="ly-chip ly-chip--err">rej {item.lastRejected ?? 0}</span>
+                        </div>
+                      ) : item?.lastSent !== undefined ? (
+                        <div className="ly-sink-chips">
+                          <span className="ly-chip ly-chip--ok">sent {item.lastSent}</span>
+                        </div>
+                      ) : null}
                     </div>
                   )
                 })}
