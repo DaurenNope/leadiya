@@ -8,6 +8,7 @@ const ctx = vi.hoisted(() => {
   const setInboundHandler = vi.fn()
   const initLegacyConnection = vi.fn()
   const logWaAgent = vi.fn()
+  const getWhatsappRateLimits = vi.fn(() => ({ maxPerHour: 10, maxPerDay: 30 }))
 
   const waRedis = {
     incr: vi.fn().mockResolvedValue(1),
@@ -49,6 +50,7 @@ const ctx = vi.hoisted(() => {
     setInboundHandler,
     initLegacyConnection,
     logWaAgent,
+    getWhatsappRateLimits,
     waRedis,
     db,
   }
@@ -86,6 +88,7 @@ vi.mock('../lib/whatsapp-pool.js', () => ({
 
 vi.mock('./sequence-engine.js', () => ({ handleInboundReply: vi.fn() }))
 vi.mock('../lib/wa-agent-log.js', () => ({ logWaAgent: ctx.logWaAgent }))
+vi.mock('../lib/worker-business-config.js', () => ({ getWhatsappRateLimits: ctx.getWhatsappRateLimits }))
 vi.mock('../lib/whatsapp-business-hours.js', () => ({
   hourInTz: vi.fn(() => 12),
   isOutsideBusinessWindow: vi.fn(() => false),
@@ -135,5 +138,21 @@ describe('whatsapp worker processor', async () => {
     await processor!(job, 'token-2')
     expect(ctx.sendMessage).toHaveBeenCalledTimes(1)
     expect(ctx.waRedis.set).toHaveBeenCalled()
+  })
+
+  it('uses configured hourly caps instead of hardcoded values', async () => {
+    ctx.getWhatsappRateLimits.mockReturnValue({ maxPerHour: 2, maxPerDay: 30 })
+    ctx.waRedis.incr
+      .mockResolvedValueOnce(3) // hour count exceeds maxPerHour=2
+      .mockResolvedValueOnce(1) // day count
+    const processor = ctx.getProcessor()
+    const job = {
+      id: 'job-3',
+      data: { leadId: 'lead-1', phoneDigits: '77001234567', body: 'hello', tenantId: 't1' },
+      moveToDelayed: ctx.moveToDelayed,
+    }
+    await expect(processor!(job, 'token-3')).rejects.toBeInstanceOf(ctx.DelayedErrorMock)
+    expect(ctx.moveToDelayed).toHaveBeenCalled()
+    expect(ctx.sendMessage).not.toHaveBeenCalled()
   })
 })

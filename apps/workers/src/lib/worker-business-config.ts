@@ -70,11 +70,14 @@ function parseDelayLike(delay: string | number | undefined, fallbackMs: number):
 type AutomationYaml = {
   mode?: string
   max_followups_per_lead?: number
+  max_outreach_per_hour?: number
+  max_outreach_per_day?: number
   sequence_cooldown?: string
   founder_alert_intents?: unknown
 }
 
 let automationCache: { at: number; data: { maxFollowupsPerLead: number; defaultCooldownMs: number } } | null = null
+let waRateCache: { at: number; data: { maxPerHour: number; maxPerDay: number } } | null = null
 let founderAlertCache: { at: number; data: Set<string> | null } | null = null
 let automationModeCache: { at: number; data: string | null } | null = null
 
@@ -101,6 +104,18 @@ export function getAutomationLimits(): { maxFollowupsPerLead: number; defaultCoo
     defaultCooldownMs: parseDelayLike(cd, 30 * 86_400_000),
   }
   automationCache = { at: now, data }
+  return data
+}
+
+export function getWhatsappRateLimits(): { maxPerHour: number; maxPerDay: number } {
+  const now = Date.now()
+  if (waRateCache && now - waRateCache.at < TTL_MS) return waRateCache.data
+
+  const auto = readAutomationSection()
+  const hour = Math.max(1, Number(auto?.max_outreach_per_hour) || 10)
+  const day = Math.max(1, Number(auto?.max_outreach_per_day) || 30)
+  const data = { maxPerHour: hour, maxPerDay: day }
+  waRateCache = { at: now, data }
   return data
 }
 

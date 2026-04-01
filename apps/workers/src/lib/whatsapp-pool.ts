@@ -11,6 +11,8 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys'
 import { env, isWhatsappInboundLogEnabled } from '@leadiya/config'
 import { buildTenantOrLegacyNullClause } from './tenant-scope.js'
+import { enqueueSerialized } from './serial-by-key.js'
+import { isDuplicateInboundMessage } from './inbound-dedupe.js'
 
 function waTypingSimulationEnabled(): boolean {
   const v = env.WHATSAPP_TYPING_SIMULATION?.trim()
@@ -422,12 +424,9 @@ async function connectTenant(tenantId: string): Promise<TenantConnection> {
         if (!text) continue
 
         const msgId = m.key?.id
-        if (msgId) {
-          const isNew = await redis.set(`wa:inbound_dedup:${msgId}`, '1', 'EX', 300, 'NX')
-          if (!isNew) {
-            console.log(`[wa-pool] Duplicate inbound ${msgId} — skipping`)
-            continue
-          }
+        if (await isDuplicateInboundMessage(redis, tenantId, msgId, jid, text)) {
+          console.log(`[wa-pool] Duplicate inbound ${msgId ?? '(no-id)'} — skipping`)
+          continue
         }
 
         try {
@@ -456,8 +455,8 @@ async function connectTenant(tenantId: string): Promise<TenantConnection> {
             inboundLogId = inserted?.id
           }
           if (handleInboundReplyFn) {
-            handleInboundReplyFn(leadId, jid, text, tenantId, { inboundLogId }).catch((err) =>
-              console.error('[wa-pool] handleInboundReply error:', err instanceof Error ? err.message : err),
+            enqueueSerialized(leadId, () => handleInboundReplyFn!(leadId, jid, text, tenantId, { inboundLogId })).catch(
+              (err) => console.error('[wa-pool] handleInboundReply error:', err instanceof Error ? err.message : err),
             )
           } else {
             console.error('[wa-pool] Inbound dropped: handleInboundReply not registered — load whatsapp-baileys.worker after sequence-engine')

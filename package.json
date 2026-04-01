@@ -17,7 +17,7 @@
     "dev:workers": "npm run dev -w @leadiya/workers",
     "lint": "turbo run lint",
     "test": "vitest run",
-    "test:wa-agent": "vitest run apps/workers/src/lib/wa-agent-log.test.ts apps/workers/src/lib/whatsapp-business-hours.test.ts packages/wa-reply/src/intent-classifier.test.ts apps/workers/src/lib/inbound-auto-reply-limits.test.ts packages/wa-reply/src/auto-responder.test.ts packages/wa-reply/src/inbound-playbook.test.ts apps/workers/src/workers/inbound-reply.integration.test.ts apps/workers/src/workers/inbound-reply.integration.branches.test.ts apps/workers/src/workers/inbound-reply-history.test.ts apps/workers/src/lib/sequence-send-guard.test.ts apps/workers/src/lib/tenant-scope.test.ts apps/workers/src/workers/whatsapp-baileys.worker.test.ts",
+    "test:wa-agent": "vitest run apps/workers/src/lib/wa-agent-log.test.ts apps/workers/src/lib/whatsapp-business-hours.test.ts packages/wa-reply/src/intent-classifier.test.ts apps/workers/src/lib/inbound-auto-reply-limits.test.ts packages/wa-reply/src/auto-responder.test.ts packages/wa-reply/src/inbound-playbook.test.ts apps/workers/src/workers/inbound-reply.integration.test.ts apps/workers/src/workers/inbound-reply.integration.branches.test.ts apps/workers/src/workers/inbound-reply-history.test.ts apps/workers/src/lib/sequence-send-guard.test.ts apps/workers/src/lib/tenant-scope.test.ts apps/workers/src/workers/whatsapp-baileys.worker.test.ts apps/workers/src/lib/serial-by-key.test.ts apps/workers/src/lib/inbound-dedupe.test.ts",
     "test:wa-hardcore": "npm run test:wa-agent && npm test",
     "benchmark:2gis": "npx tsx scripts/benchmark-2gis-scrape.ts",
     "test:stage2-http": "npx tsx scripts/test-stage2-http.ts",

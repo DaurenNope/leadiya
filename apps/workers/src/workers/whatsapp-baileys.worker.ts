@@ -10,6 +10,7 @@ import {
 import { handleInboundReply } from './sequence-engine.js'
 import { logWaAgent } from '../lib/wa-agent-log.js'
 import { shouldSuppressSequenceSend } from '../lib/sequence-send-guard.js'
+import { getWhatsappRateLimits } from '../lib/worker-business-config.js'
 import {
   hourInTz,
   isOutsideBusinessWindow,
@@ -70,7 +71,9 @@ const whatsappWorker = new Worker<WhatsAppOutreachJobData>(
     const dayCount = await waRedis.incr(dayKey)
     if (dayCount === 1) await waRedis.expire(dayKey, 172800)
 
-    if (hourCount > 10) {
+    const { maxPerHour, maxPerDay } = getWhatsappRateLimits()
+
+    if (hourCount > maxPerHour) {
       await waRedis.decr(hourKey)
       await waRedis.decr(dayKey)
       const delayMs = 3600_000
@@ -87,7 +90,7 @@ const whatsappWorker = new Worker<WhatsAppOutreachJobData>(
       await job.moveToDelayed(Date.now() + delayMs, token)
       throw new DelayedError()
     }
-    if (dayCount > 30) {
+    if (dayCount > maxPerDay) {
       await waRedis.decr(hourKey)
       await waRedis.decr(dayKey)
       const delayMs = 24 * 3600_000
