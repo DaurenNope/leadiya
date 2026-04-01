@@ -45,9 +45,13 @@ supabase/.temp/
 # WhatsApp auth (deprecated)
 wa-auth/
 data/
+# Dev worker single-instance lock (see apps/workers/src/lib/dev-single-instance.ts)
+**/.workers-dev.lock
 
 # Test artifacts
 .test-checkpoints/
+coverage/
+.nyc_output/
 
 # Plan files (agent working docs)
 docs/superpowers/

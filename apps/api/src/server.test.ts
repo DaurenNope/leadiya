@@ -352,6 +352,33 @@ describe('API (Hono)', () => {
       expect(body.code).toBe('WHATSAPP_BAILEYS_DISABLED')
     })
 
+    it('POST /api/outreach/send returns 404 when lead is outside tenant scope', async () => {
+      const prev = process.env.WHATSAPP_BAILEYS_ENABLED
+      const prevTenant = process.env.DEFAULT_TENANT_ID
+      process.env.WHATSAPP_BAILEYS_ENABLED = 'true'
+      process.env.DEFAULT_TENANT_ID = 'a0000000-0000-4000-8000-000000000001'
+      try {
+        ctx.selectQueue.push([])
+        const res = await app.request('/api/outreach/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            leadId: '00000000-0000-0000-0000-000000000001',
+            sequenceKey: 'cold_outreach',
+            stepIndex: 0,
+          }),
+        })
+        expect(res.status).toBe(404)
+        const body = (await res.json()) as { code?: string }
+        expect(body.code).toBe('NOT_FOUND')
+      } finally {
+        if (prev !== undefined) process.env.WHATSAPP_BAILEYS_ENABLED = prev
+        else delete process.env.WHATSAPP_BAILEYS_ENABLED
+        if (prevTenant !== undefined) process.env.DEFAULT_TENANT_ID = prevTenant
+        else delete process.env.DEFAULT_TENANT_ID
+      }
+    })
+
     it('POST /api/outreach/schedule returns 503 when Baileys send is disabled', async () => {
       const res = await app.request('/api/outreach/schedule', {
         method: 'POST',
@@ -445,6 +472,57 @@ describe('API (Hono)', () => {
       } finally {
         if (prevDefault !== undefined) process.env.DEFAULT_TENANT_ID = prevDefault
         else delete process.env.DEFAULT_TENANT_ID
+      }
+    })
+
+    it('POST /api/outreach/sequences/start returns 403 when tenant is unresolved', async () => {
+      const prev = process.env.DEFAULT_TENANT_ID
+      process.env.DEFAULT_TENANT_ID = ''
+      try {
+        const res = await app.request('/api/outreach/sequences/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ leadId: '00000000-0000-0000-0000-000000000001' }),
+        })
+        expect(res.status).toBe(403)
+        const body = (await res.json()) as { code?: string }
+        expect(body.code).toBe('TENANT_REQUIRED')
+      } finally {
+        if (prev !== undefined) process.env.DEFAULT_TENANT_ID = prev
+        else delete process.env.DEFAULT_TENANT_ID
+      }
+    })
+
+    it('POST /api/outreach/webhook/resend-inbound returns 401 when secret mismatches', async () => {
+      const prev = process.env.RESEND_INBOUND_WEBHOOK_SECRET
+      process.env.RESEND_INBOUND_WEBHOOK_SECRET = 'expected-secret'
+      try {
+        const res = await app.request('/api/outreach/webhook/resend-inbound', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-leadiya-webhook-secret': 'wrong-secret' },
+          body: JSON.stringify({ from: 'lead@example.com', text: 'Hello' }),
+        })
+        expect(res.status).toBe(401)
+      } finally {
+        if (prev !== undefined) process.env.RESEND_INBOUND_WEBHOOK_SECRET = prev
+        else delete process.env.RESEND_INBOUND_WEBHOOK_SECRET
+      }
+    })
+
+    it('POST /api/outreach/webhook/resend-inbound accepts matching secret header', async () => {
+      const prev = process.env.RESEND_INBOUND_WEBHOOK_SECRET
+      process.env.RESEND_INBOUND_WEBHOOK_SECRET = 'expected-secret'
+      try {
+        ctx.selectQueue.push([])
+        const res = await app.request('/api/outreach/webhook/resend-inbound', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-leadiya-webhook-secret': 'expected-secret' },
+          body: JSON.stringify({ from: 'lead@example.com', text: 'Hello' }),
+        })
+        expect(res.status).toBe(200)
+      } finally {
+        if (prev !== undefined) process.env.RESEND_INBOUND_WEBHOOK_SECRET = prev
+        else delete process.env.RESEND_INBOUND_WEBHOOK_SECRET
       }
     })
   })

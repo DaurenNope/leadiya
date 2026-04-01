@@ -1,8 +1,13 @@
-import { describe, expect, it, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { maxInboundAutoReplies } from './inbound-auto-reply-limits.js'
 
 describe('maxInboundAutoReplies', () => {
   const orig = process.env.OUTREACH_MAX_INBOUND_AUTO_REPLIES
+
+  beforeEach(() => {
+    if (orig === undefined) delete process.env.OUTREACH_MAX_INBOUND_AUTO_REPLIES
+    else process.env.OUTREACH_MAX_INBOUND_AUTO_REPLIES = orig
+  })
 
   afterEach(() => {
     if (orig === undefined) delete process.env.OUTREACH_MAX_INBOUND_AUTO_REPLIES
@@ -19,7 +24,7 @@ describe('maxInboundAutoReplies', () => {
     expect(maxInboundAutoReplies()).toBe(25)
   })
 
-  it('clamps invalid to 5', () => {
+  it('clamps invalid low values to default', () => {
     process.env.OUTREACH_MAX_INBOUND_AUTO_REPLIES = '0'
     expect(maxInboundAutoReplies()).toBe(5)
   })

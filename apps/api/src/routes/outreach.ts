@@ -15,7 +15,7 @@ import {
   and,
   sql,
 } from '@leadiya/db'
-import { whatsappOutreachQueue } from '@leadiya/queue'
+import { whatsappOutreachQueue, emailOutreachQueue } from '@leadiya/queue'
 import { env, isWhatsappInboundLogEnabled } from '@leadiya/config'
 import { z } from 'zod'
 import { leadListFields } from '../lib/lead-select.js'
@@ -26,6 +26,7 @@ import {
 } from '../lib/sequence-resolver.js'
 import { renderTemplate, buildOutreachVars } from '../lib/render-outreach.js'
 import { phoneDigitsForWa, waMeLink } from '../lib/wa-link.js'
+import { simulateNoSequenceReply, simulateReplyBodySchema } from '../lib/wa-simulate-reply.js'
 import { buildMailtoUrl, splitEmailTemplate } from '../lib/mailto.js'
 import type { AppEnv } from '../types.js'
 
@@ -111,6 +112,26 @@ function getScriptsTenantId(c: { get: (k: 'tenant') => unknown }): string | null
   return tenant?.id ?? null
 }
 
+async function loadTenantLeadById(leadId: string, tenantId: string | null) {
+  if (!tenantId) return null
+  const [lead] = await db
+    .select(leadListFields)
+    .from(leads)
+    .where(
+      and(
+        eq(leads.id, leadId),
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(tenantLeads)
+            .where(and(eq(tenantLeads.leadId, leads.id), eq(tenantLeads.tenantId, tenantId))),
+        ),
+      ),
+    )
+    .limit(1)
+  return lead ?? null
+}
+
 /** Maps DB / IO failures on script routes to JSON so the dashboard can show a hint (e.g. missing migration). */
 function scriptsRouteError(
   c: { json: (body: unknown, status?: number) => Response },
@@ -172,11 +193,9 @@ outreachRouter.post('/preview', async (c) => {
   }
 
   const { leadId, sequenceKey, stepIndex, phoneOverride, emailOverride } = parsed.data
-  const [lead] = await db
-    .select(leadListFields)
-    .from(leads)
-    .where(eq(leads.id, leadId))
-    .limit(1)
+  const mergeTenantId = tenantIdForMerge(c)
+  if (!mergeTenantId) return c.json({ error: 'Tenant required', code: 'TENANT_REQUIRED' }, 403)
+  const lead = await loadTenantLeadById(leadId, mergeTenantId)
   if (!lead) return c.json({ error: 'Lead not found', code: 'NOT_FOUND' }, 404)
 
   const sequences = await getMergedSequencesForTenant(tenantIdForMerge(c))
@@ -395,11 +414,9 @@ outreachRouter.post('/send', async (c) => {
   }
 
   const { leadId, sequenceKey, stepIndex, body: bodyOverride, phoneOverride } = parsed.data
-  const [lead] = await db
-    .select(leadListFields)
-    .from(leads)
-    .where(eq(leads.id, leadId))
-    .limit(1)
+  const mergeTenantId = tenantIdForMerge(c)
+  if (!mergeTenantId) return c.json({ error: 'Tenant required', code: 'TENANT_REQUIRED' }, 403)
+  const lead = await loadTenantLeadById(leadId, mergeTenantId)
   if (!lead) return c.json({ error: 'Lead not found', code: 'NOT_FOUND' }, 404)
 
   const sequences = await getMergedSequencesForTenant(tenantIdForMerge(c))
@@ -461,11 +478,9 @@ outreachRouter.post('/schedule', async (c) => {
   }
 
   const { leadId, sequenceKey, stepIndex, body: bodyOverride, phoneOverride, delayMs } = parsed.data
-  const [lead] = await db
-    .select(leadListFields)
-    .from(leads)
-    .where(eq(leads.id, leadId))
-    .limit(1)
+  const mergeTenantId = tenantIdForMerge(c)
+  if (!mergeTenantId) return c.json({ error: 'Tenant required', code: 'TENANT_REQUIRED' }, 403)
+  const lead = await loadTenantLeadById(leadId, mergeTenantId)
   if (!lead) return c.json({ error: 'Lead not found', code: 'NOT_FOUND' }, 404)
 
   const sequences = await getMergedSequencesForTenant(tenantIdForMerge(c))
@@ -529,11 +544,9 @@ outreachRouter.post('/send-email', async (c) => {
   }
 
   const { leadId, sequenceKey, stepIndex, body: bodyOverride, emailOverride } = parsed.data
-  const [lead] = await db
-    .select(leadListFields)
-    .from(leads)
-    .where(eq(leads.id, leadId))
-    .limit(1)
+  const mergeTenantId = tenantIdForMerge(c)
+  if (!mergeTenantId) return c.json({ error: 'Tenant required', code: 'TENANT_REQUIRED' }, 403)
+  const lead = await loadTenantLeadById(leadId, mergeTenantId)
   if (!lead) return c.json({ error: 'Lead not found', code: 'NOT_FOUND' }, 404)
 
   const sequences = await getMergedSequencesForTenant(tenantIdForMerge(c))
@@ -615,21 +628,57 @@ outreachRouter.get('/whatsapp/status', async (c) => {
   const redis = getRedis()
   const tenant = c.get('tenant') as { id: string } | null
   const defaultTid = process.env.DEFAULT_TENANT_ID?.trim()
-  /** Worker always publishes `wa:status:<uuid>` (never legacy `wa:connection:*`). Align with Baileys init when JWT has no tenant row yet. */
-  const effectiveTenantId = tenant?.id ?? defaultTid ?? null
+  /**
+   * Worker publishes `wa:status:<uuid>` per connected tenant. If JWT tenant ≠ DEFAULT_TENANT_ID,
+   * read both and pick the stronger signal so the UI matches a single Baileys session on the default tenant.
+   */
+  const candidateIds = [...new Set([tenant?.id, defaultTid].filter((x): x is string => Boolean(x)))]
 
-  const statusKeyPrefix = effectiveTenantId ? `wa:status:${effectiveTenantId}` : 'wa:connection:status'
-  const qrKeyPrefix = effectiveTenantId ? `wa:qr:${effectiveTenantId}` : 'wa:connection:qr'
+  const rank: Record<string, number> = {
+    connected: 5,
+    waiting_qr: 4,
+    reconnecting: 3,
+    disconnected: 2,
+    unknown: 1,
+  }
 
-  const [statusRaw, qr] = await Promise.all([
-    redis.get(statusKeyPrefix),
-    redis.get(qrKeyPrefix),
-  ])
-  const parsed = statusRaw ? JSON.parse(statusRaw) as { status: string; updatedAt: number } : null
+  let bestParsed: { status: string; updatedAt: number } | null = null
+  let bestQr: string | null = null
+  let bestScore = -1
+
+  for (const id of candidateIds) {
+    const [statusRaw, qr] = await Promise.all([redis.get(`wa:status:${id}`), redis.get(`wa:qr:${id}`)])
+    if (!statusRaw) continue
+    const parsed = JSON.parse(statusRaw) as { status: string; updatedAt: number }
+    const score = rank[parsed.status] ?? 0
+    if (score > bestScore) {
+      bestScore = score
+      bestParsed = parsed
+      bestQr = qr ?? null
+    } else if (score === bestScore && bestParsed && parsed.updatedAt > bestParsed.updatedAt) {
+      bestParsed = parsed
+      bestQr = qr ?? null
+    }
+  }
+
+  if (!bestParsed && candidateIds.length === 0) {
+    const [statusRaw, qr] = await Promise.all([
+      redis.get('wa:connection:status'),
+      redis.get('wa:connection:qr'),
+    ])
+    const parsed = statusRaw ? (JSON.parse(statusRaw) as { status: string; updatedAt: number }) : null
+    return c.json({
+      status: parsed?.status ?? 'unknown',
+      updatedAt: parsed?.updatedAt ?? null,
+      qr: qr ?? null,
+      baileysSendEnabled: isBaileysSendEnabled(),
+    })
+  }
+
   return c.json({
-    status: parsed?.status ?? 'unknown',
-    updatedAt: parsed?.updatedAt ?? null,
-    qr: qr ?? null,
+    status: bestParsed?.status ?? 'unknown',
+    updatedAt: bestParsed?.updatedAt ?? null,
+    qr: bestQr ?? null,
     baileysSendEnabled: isBaileysSendEnabled(),
   })
 })
@@ -642,6 +691,15 @@ function parseSequenceDelay(delay: string | number | undefined): number {
   const v = parseInt(m[1]!, 10)
   const u: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }
   return v * (u[m[2]!] ?? 0)
+}
+
+function activeSequenceTenantScope(tenantId: string | null): SQL {
+  const defaultTid = process.env.DEFAULT_TENANT_ID?.trim() || null
+  if (!tenantId) return isNull(leadSequenceState.tenantId)
+  if (defaultTid && tenantId === defaultTid) {
+    return or(eq(leadSequenceState.tenantId, tenantId), isNull(leadSequenceState.tenantId))!
+  }
+  return eq(leadSequenceState.tenantId, tenantId)
 }
 
 const sequenceStepPutSchema = z.object({
@@ -769,17 +827,40 @@ outreachRouter.post('/sequences/start', async (c) => {
   const { leadId, sequenceKey = 'cold_outreach', contactId } = body as { leadId?: string; sequenceKey?: string; contactId?: string }
   if (!leadId) return c.json({ error: 'leadId required' }, 400)
 
-  const [coolRow] = await db
-    .select({ nextOutreachEligibleAt: leads.nextOutreachEligibleAt })
+  const mergeTenantId = tenantIdForMerge(c)
+  if (!mergeTenantId) return c.json({ error: 'Tenant required', code: 'TENANT_REQUIRED' }, 403)
+
+  const [leadRow] = await db
+    .select({
+      id: leads.id,
+      name: leads.name,
+      category: leads.category,
+      city: leads.city,
+      whatsapp: leads.whatsapp,
+      email: leads.email,
+      nextOutreachEligibleAt: leads.nextOutreachEligibleAt,
+    })
     .from(leads)
-    .where(eq(leads.id, leadId))
+    .where(
+      and(
+        eq(leads.id, leadId),
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(tenantLeads)
+            .where(and(eq(tenantLeads.leadId, leads.id), eq(tenantLeads.tenantId, mergeTenantId))),
+        ),
+      ),
+    )
     .limit(1)
-  if (coolRow?.nextOutreachEligibleAt && coolRow.nextOutreachEligibleAt.getTime() > Date.now()) {
+  if (!leadRow) return c.json({ error: 'Lead not found', code: 'NOT_FOUND' }, 404)
+
+  if (leadRow.nextOutreachEligibleAt && leadRow.nextOutreachEligibleAt.getTime() > Date.now()) {
     return c.json(
       {
         error: 'Lead on outreach cooldown',
         code: 'COOLDOWN',
-        until: coolRow.nextOutreachEligibleAt.toISOString(),
+        until: leadRow.nextOutreachEligibleAt.toISOString(),
       },
       429,
     )
@@ -813,12 +894,66 @@ outreachRouter.post('/sequences/start', async (c) => {
     .onConflictDoNothing()
     .returning()
 
+  if (state) {
+    const firstStep = seq.steps[0]
+    const queueTenantId = outreachQueueTenantId(c)
+    if (firstStep) {
+      const business = loadBusinessConfig()
+      const vars = buildOutreachVars(leadRow, business)
+      const body = renderTemplate(firstStep.template, vars)
+      if (firstStep.channel === 'whatsapp') {
+        let phoneDigits: string | null = null
+        if (contactId) {
+          const [contact] = await db.select({ phone: contacts.phone }).from(contacts).where(eq(contacts.id, contactId)).limit(1)
+          phoneDigits = phoneDigitsForWa(contact?.phone ?? null)
+        }
+        if (!phoneDigits) {
+          phoneDigits = phoneDigitsForWa(leadRow.whatsapp)
+        }
+        if (phoneDigits) {
+          await whatsappOutreachQueue.add(
+            'send',
+            { leadId, phoneDigits, body, sequenceKey, stepIndex: 0, tenantId: queueTenantId },
+            { removeOnComplete: true },
+          )
+          await db
+            .update(leadSequenceState)
+            .set({ messageCount: sql`${leadSequenceState.messageCount} + 1`, updatedAt: now })
+            .where(eq(leadSequenceState.id, state.id))
+        }
+      } else if (firstStep.channel === 'email') {
+        let emailTo: string | null = leadRow.email?.trim() || null
+        if (!emailTo) {
+          const rows = await db.select({ email: contacts.email }).from(contacts).where(eq(contacts.leadId, leadId)).limit(5)
+          emailTo = rows.find((r) => r.email?.includes('@'))?.email ?? null
+        }
+        if (emailTo) {
+          const subjectMatch = body.match(/^Тема:\s*(.+)$/m)
+          const subject = subjectMatch?.[1]?.trim() || `Сотрудничество с ${leadRow.name || 'вашей компанией'}`
+          const emailBody = subjectMatch ? body.replace(/^Тема:\s*.+\n?/m, '').trim() : body
+          await emailOutreachQueue.add(
+            'send',
+            { leadId, to: emailTo, subject, body: emailBody, sequenceKey, stepIndex: 0, tenantId: queueTenantId },
+            { removeOnComplete: true },
+          )
+          await db
+            .update(leadSequenceState)
+            .set({ messageCount: sql`${leadSequenceState.messageCount} + 1`, updatedAt: now })
+            .where(eq(leadSequenceState.id, state.id))
+        }
+      }
+    }
+  }
+
   return c.json({ started: Boolean(state), stateId: state?.id ?? null })
 })
 
 outreachRouter.get('/sequences/active', async (c) => {
   const limitRaw = c.req.query('limit')
   const limit = Math.min(100, parseInt(limitRaw ?? '50', 10) || 50)
+
+  const tenantId = tenantIdForMerge(c)
+  if (!tenantId) return c.json({ error: 'Tenant required', code: 'TENANT_REQUIRED' }, 403)
 
   const rows = await db
     .select({
@@ -839,16 +974,45 @@ outreachRouter.get('/sequences/active', async (c) => {
     })
     .from(leadSequenceState)
     .innerJoin(leads, eq(leadSequenceState.leadId, leads.id))
-    .where(eq(leadSequenceState.status, 'active'))
+    .where(and(eq(leadSequenceState.status, 'active'), activeSequenceTenantScope(tenantId)))
     .orderBy(desc(leadSequenceState.updatedAt))
     .limit(limit)
 
   return c.json({ items: rows })
 })
 
+/** Dry-run classifier + auto-responder (no queue / no DB). Same engine as worker no-sequence path. */
+outreachRouter.post('/simulate-reply', async (c) => {
+  const json = await c.req.json().catch(() => ({}))
+  const parsed = simulateReplyBodySchema.safeParse(json)
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid body', details: parsed.error.format() }, 400)
+  }
+  try {
+    const result = await simulateNoSequenceReply(parsed.data)
+    return c.json(result)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return c.json({ error: msg }, 500)
+  }
+})
+
 // ── Resend Inbound Webhook ───────────────────────────────────
 
 outreachRouter.post('/webhook/resend-inbound', async (c) => {
+  const expected = process.env.RESEND_INBOUND_WEBHOOK_SECRET?.trim()
+  if (expected) {
+    const auth = c.req.header('authorization')?.trim() || ''
+    const bearer = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : null
+    const provided =
+      c.req.header('x-leadiya-webhook-secret')?.trim() ||
+      c.req.header('x-resend-webhook-secret')?.trim() ||
+      bearer
+    if (!provided || provided !== expected) {
+      return c.json({ received: true, processed: false, reason: 'unauthorized' }, 401)
+    }
+  }
+
   const payload = await c.req.json()
   const from = payload.from as string | undefined
   const subject = payload.subject as string | undefined

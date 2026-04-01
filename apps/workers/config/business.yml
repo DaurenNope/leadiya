@@ -67,12 +67,8 @@ automation:
   mode: fully_automatic
   # Pings to FOUNDER_WHATSAPP (inbound-reply). Omit = all intents; [] = none.
   founder_alert_intents:
-    - positive
-    - pricing
-    - qualification
     - meeting
     - escalation
-    - max_turns
 
   # Safety limits for WhatsApp (Baileys)
   max_outreach_per_day: 30

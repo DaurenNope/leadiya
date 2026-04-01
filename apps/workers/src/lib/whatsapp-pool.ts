@@ -10,7 +10,26 @@ import makeWASocket, {
   type WASocket,
 } from '@whiskeysockets/baileys'
 import { env, isWhatsappInboundLogEnabled } from '@leadiya/config'
-import { db, outreachLog, contacts, leads, tenantLeads, eq, sql, and, gte } from '@leadiya/db'
+import { buildTenantOrLegacyNullClause } from './tenant-scope.js'
+
+function waTypingSimulationEnabled(): boolean {
+  const v = env.WHATSAPP_TYPING_SIMULATION?.trim()
+  if (v === 'false' || v === '0') return false
+  return true
+}
+import {
+  db,
+  outreachLog,
+  contacts,
+  leads,
+  tenantLeads,
+  leadSequenceState,
+  eq,
+  sql,
+  and,
+  gte,
+  desc,
+} from '@leadiya/db'
 
 const BASE_AUTH_DIR =
   env.WHATSAPP_BAILEYS_AUTH_DIR?.trim() || resolve(process.cwd(), 'data/baileys-auth')
@@ -40,13 +59,17 @@ function statusKey(tenantId: string) { return `wa:status:${tenantId}` }
 function qrKey(tenantId: string) { return `wa:qr:${tenantId}` }
 
 /** Redis TTL: "connected" must survive page reloads (was EX 300 → key vanished after 5 min while socket stayed open). */
-function statusTtlSec(status: 'disconnected' | 'waiting_qr' | 'connected'): number {
+function statusTtlSec(status: 'disconnected' | 'waiting_qr' | 'connected' | 'reconnecting'): number {
   if (status === 'connected') return 604800 // 7d — refreshed on activity; Baileys session is on disk
   if (status === 'waiting_qr') return 300
+  if (status === 'reconnecting') return 3600 // transient drops — don’t look like a full logout
   return 3600 // disconnected — show for a while, then expire to unknown if worker stopped
 }
 
-async function publishStatus(tenantId: string, status: 'disconnected' | 'waiting_qr' | 'connected'): Promise<void> {
+async function publishStatus(
+  tenantId: string,
+  status: 'disconnected' | 'waiting_qr' | 'connected' | 'reconnecting',
+): Promise<void> {
   const ttl = statusTtlSec(status)
   await redis.set(statusKey(tenantId), JSON.stringify({ status, updatedAt: Date.now() }), 'EX', ttl)
   if (status !== 'waiting_qr') await redis.del(qrKey(tenantId))
@@ -102,10 +125,58 @@ function resolveInboundPeerJid(m: { key?: { remoteJid?: string | null; remoteJid
   return k.remoteJid
 }
 
-async function findLeadByJid(jid: string): Promise<string | null> {
+/**
+ * Prefer the lead that has an **active** outreach sequence for this tenant and phone.
+ * Fixes duplicate-lead / same-number issues: reply after cold_outreach must attach to that sequence, not an old lead.
+ */
+async function findLeadIdWithActiveSequenceForJid(tenantId: string, jid: string): Promise<string | null> {
+  const rawDigits = jid.replace(/@.*$/, '').replace(/\D/g, '')
+  if (rawDigits.length < 10) return null
+  const suffix = rawDigits.slice(-10)
+  const defaultTid = process.env.DEFAULT_TENANT_ID?.trim() || null
+  const tenantClause = buildTenantOrLegacyNullClause(leadSequenceState.tenantId, tenantId, defaultTid)
+
+  try {
+    const phoneMatchLeads = sql`right(regexp_replace(coalesce(${leads.whatsapp}::text, ''), '[^0-9]', '', 'g'), 10) = ${suffix}`
+
+    const [byWa] = await db
+      .select({ leadId: leadSequenceState.leadId })
+      .from(leadSequenceState)
+      .innerJoin(leads, eq(leadSequenceState.leadId, leads.id))
+      .where(and(eq(leadSequenceState.status, 'active'), tenantClause, phoneMatchLeads))
+      .orderBy(desc(leadSequenceState.updatedAt))
+      .limit(1)
+    if (byWa?.leadId) return byWa.leadId
+
+    const phoneVariants = [rawDigits, `+${rawDigits}`]
+    if (rawDigits.length === 11 && rawDigits.startsWith('7')) {
+      phoneVariants.push(`8${rawDigits.slice(1)}`, `+7${rawDigits.slice(1)}`)
+    }
+    for (const phone of phoneVariants) {
+      const [byContact] = await db
+        .select({ leadId: leadSequenceState.leadId })
+        .from(leadSequenceState)
+        .innerJoin(contacts, eq(leadSequenceState.leadId, contacts.leadId))
+        .where(and(eq(leadSequenceState.status, 'active'), tenantClause, eq(contacts.phone, phone)))
+        .orderBy(desc(leadSequenceState.updatedAt))
+        .limit(1)
+      if (byContact?.leadId) return byContact.leadId
+    }
+  } catch (e) {
+    console.warn('[wa-pool] active-sequence lead match failed:', e instanceof Error ? e.message : e)
+  }
+  return null
+}
+
+async function findLeadByJid(jid: string, tenantId: string): Promise<string | null> {
   const digits = jid.replace(/@.*$/, '')
   if (!digits || digits.length < 10) return null
+  const defaultTid = process.env.DEFAULT_TENANT_ID?.trim() || null
+  const outreachTenantClause = buildTenantOrLegacyNullClause(outreachLog.tenantId, tenantId, defaultTid)
   try {
+    const fromActive = await findLeadIdWithActiveSequenceForJid(tenantId, jid)
+    if (fromActive) return fromActive
+
     const suffix = digits.length >= 10 ? digits.slice(-10) : null
     if (suffix) {
       const [fromDigits] = await db
@@ -114,9 +185,12 @@ async function findLeadByJid(jid: string): Promise<string | null> {
         .where(
           and(
             sql`${outreachLog.leadId} IS NOT NULL`,
+            outreachTenantClause,
             sql`right(regexp_replace(coalesce(${outreachLog.waPeer}::text, ''), '[^0-9]', '', 'g'), 10) = ${suffix}`,
           ),
         )
+        /** Same phone can exist on multiple leads — use the thread we touched most recently. */
+        .orderBy(desc(outreachLog.createdAt))
         .limit(1)
       if (fromDigits?.leadId) return fromDigits.leadId
     }
@@ -124,7 +198,13 @@ async function findLeadByJid(jid: string): Promise<string | null> {
     const [fromLog] = await db
       .select({ leadId: outreachLog.leadId })
       .from(outreachLog)
-      .where(sql`${outreachLog.waPeer} = ${jid} AND ${outreachLog.leadId} IS NOT NULL`)
+      .where(
+        and(
+          sql`${outreachLog.waPeer} = ${jid} AND ${outreachLog.leadId} IS NOT NULL`,
+          outreachTenantClause,
+        ),
+      )
+      .orderBy(desc(outreachLog.createdAt))
       .limit(1)
     if (fromLog?.leadId) return fromLog.leadId
 
@@ -136,14 +216,28 @@ async function findLeadByJid(jid: string): Promise<string | null> {
       const [contact] = await db
         .select({ leadId: contacts.leadId })
         .from(contacts)
-        .where(eq(contacts.phone, phone))
+        .innerJoin(tenantLeads, eq(tenantLeads.leadId, contacts.leadId))
+        .where(
+          and(
+            eq(contacts.phone, phone),
+            eq(tenantLeads.tenantId, tenantId),
+          ),
+        )
+        .orderBy(desc(contacts.updatedAt))
         .limit(1)
       if (contact?.leadId) return contact.leadId
     }
     const [waLead] = await db
       .select({ id: leads.id })
       .from(leads)
-      .where(sql`${leads.whatsapp} LIKE ${'%' + digits + '%'}`)
+      .innerJoin(tenantLeads, eq(tenantLeads.leadId, leads.id))
+      .where(
+        and(
+          sql`${leads.whatsapp} LIKE ${'%' + digits + '%'}`,
+          eq(tenantLeads.tenantId, tenantId),
+        ),
+      )
+      .orderBy(desc(leads.updatedAt))
       .limit(1)
     if (waLead?.id) return waLead.id
   } catch (e) {
@@ -188,6 +282,19 @@ async function createLeadFromInboundJid(tenantId: string, jid: string): Promise<
       .onConflictDoNothing()
 
     console.log(`[wa-pool] Created lead ${row.id} from inbound ${jid.slice(0, 24)}… (tenant ${tenantId.slice(0, 8)})`)
+
+    const inboundSeq = process.env.WHATSAPP_INBOUND_START_SEQUENCE?.trim()
+    if (inboundSeq) {
+      void import('../workers/sequence-engine.js')
+        .then(({ startSequence }) => startSequence(row.id, inboundSeq, undefined, tenantId))
+        .catch((err) =>
+          console.warn(
+            '[wa-pool] WHATSAPP_INBOUND_START_SEQUENCE failed:',
+            err instanceof Error ? err.message : err,
+          ),
+        )
+    }
+
     return row.id
   } catch (e) {
     console.warn('[wa-pool] createLeadFromInboundJid failed:', e instanceof Error ? e.message : e)
@@ -195,10 +302,26 @@ async function createLeadFromInboundJid(tenantId: string, jid: string): Promise<
   }
 }
 
-let handleInboundReplyFn: ((leadId: string | null, jid: string, text: string, tenantId?: string | null) => Promise<void>) | null = null
+type InboundReplyMeta = { inboundLogId?: string | null }
+
+let handleInboundReplyFn:
+  | ((
+      leadId: string | null,
+      jid: string,
+      text: string,
+      tenantId?: string | null,
+      meta?: InboundReplyMeta,
+    ) => Promise<void>)
+  | null = null
 
 export function setInboundHandler(
-  fn: (leadId: string | null, jid: string, text: string, tenantId?: string | null) => Promise<void>,
+  fn: (
+    leadId: string | null,
+    jid: string,
+    text: string,
+    tenantId?: string | null,
+    meta?: InboundReplyMeta,
+  ) => Promise<void>,
 ) {
   handleInboundReplyFn = fn
 }
@@ -270,10 +393,12 @@ async function connectTenant(tenantId: string): Promise<TenantConnection> {
           )
         }
         conn.sock = null
-        void publishStatus(tenantId, 'disconnected')
+        /** Don’t flash “disconnected” on every WebSocket blip — only when the session is really gone. */
         if (shouldReconnect) {
+          void publishStatus(tenantId, 'reconnecting')
           setTimeout(() => void connectTenant(tenantId).catch(() => {}), reconnectMs)
         } else {
+          void publishStatus(tenantId, 'disconnected')
           pool.delete(tenantId)
           console.error(`[wa-pool] ${tenantId.slice(0, 8)} logged out — user must re-scan QR`)
         }
@@ -306,7 +431,7 @@ async function connectTenant(tenantId: string): Promise<TenantConnection> {
         }
 
         try {
-          let leadId = await findLeadByJid(jid)
+          let leadId = await findLeadByJid(jid, tenantId)
           if (!leadId) {
             leadId = (await createLeadFromInboundJid(tenantId, jid)) ?? null
             if (!leadId) {
@@ -314,21 +439,28 @@ async function connectTenant(tenantId: string): Promise<TenantConnection> {
               continue
             }
           }
+          let inboundLogId: string | undefined
           if (isWhatsappInboundLogEnabled()) {
-            await db.insert(outreachLog).values({
-              tenantId,
-              leadId,
-              channel: 'whatsapp',
-              direction: 'inbound',
-              body: text,
-              status: 'received',
-              waPeer: jid,
-            })
+            const [inserted] = await db
+              .insert(outreachLog)
+              .values({
+                tenantId,
+                leadId,
+                channel: 'whatsapp',
+                direction: 'inbound',
+                body: text,
+                status: 'received',
+                waPeer: jid,
+              })
+              .returning({ id: outreachLog.id })
+            inboundLogId = inserted?.id
           }
           if (handleInboundReplyFn) {
-            handleInboundReplyFn(leadId, jid, text, tenantId).catch((err) =>
+            handleInboundReplyFn(leadId, jid, text, tenantId, { inboundLogId }).catch((err) =>
               console.error('[wa-pool] handleInboundReply error:', err instanceof Error ? err.message : err),
             )
+          } else {
+            console.error('[wa-pool] Inbound dropped: handleInboundReply not registered — load whatsapp-baileys.worker after sequence-engine')
           }
         } catch (e) {
           console.warn('[wa-pool] inbound handling failed:', e instanceof Error ? e.message : e)
@@ -454,14 +586,18 @@ export async function sendMessage(
     return
   }
 
-  try {
-    await sock.presenceSubscribe(jid)
-    await new Promise((r) => setTimeout(r, 500 + Math.random() * 1000))
-    await sock.sendPresenceUpdate('composing', jid)
-    await new Promise((r) => setTimeout(r, 2000 + Math.random() * 3000))
-    await sock.sendPresenceUpdate('paused', jid)
-    await new Promise((r) => setTimeout(r, 300))
-  } catch { /* typing simulation is best-effort */ }
+  if (waTypingSimulationEnabled()) {
+    try {
+      await sock.presenceSubscribe(jid)
+      await new Promise((r) => setTimeout(r, 500 + Math.random() * 1000))
+      await sock.sendPresenceUpdate('composing', jid)
+      await new Promise((r) => setTimeout(r, 2000 + Math.random() * 3000))
+      await sock.sendPresenceUpdate('paused', jid)
+      await new Promise((r) => setTimeout(r, 300))
+    } catch {
+      /* typing simulation is best-effort */
+    }
+  }
 
   await sock.sendMessage(jid, { text: trimmed })
 

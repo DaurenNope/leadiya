@@ -1,28 +1,60 @@
-import { db, leads, outreachLog, leadSequenceState, eq, sql, and, desc, or, isNull, ne } from '@leadiya/db'
+import { db, leads, outreachLog, leadSequenceState, eq, and, desc } from '@leadiya/db'
 import {
   whatsappOutreachQueue,
   type WhatsAppOutreachJobData,
 } from '@leadiya/queue'
-import { classifyReply, type ClassifyResult } from '../lib/intent-classifier.js'
-import { generateResponse, extractQualificationFromMessage, type ResponseContext } from '../lib/auto-responder.js'
+import {
+  classifyReply,
+  generateResponse,
+  extractQualificationFromMessage,
+  type ClassifyResult,
+  type ResponseContext,
+} from '@leadiya/wa-reply'
 import { processReferral } from '../lib/contact-extractor.js'
 import { getAutomationLimits, getAutomationMode, shouldSendFounderAlert } from '../lib/worker-business-config.js'
-import { maxInboundAutoReplies } from '../lib/inbound-auto-reply-limits.js'
+import { logWaAgent } from '../lib/wa-agent-log.js'
 
 const DEFAULT_TENANT_ENV = process.env.DEFAULT_TENANT_ID?.trim() || null
-const AUTO_REPLY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
+const DEFAULT_HISTORY_MAX_MESSAGES = 20
+const DEFAULT_HISTORY_MAX_CHARS = 4000
+const MAX_HISTORY_MESSAGE_CHARS = 500
 
 /**
- * Low-confidence paths (Ollama miss → `unknown`, etc.) normally escalate to human.
- * - `OUTREACH_AUTO_REPLY_LOW_CONFIDENCE=1` forces auto-reply on.
- * - `=0` / `false` forces off even if business.yml says fully automatic.
- * - Otherwise, `automation.mode: fully_automatic` in business.yml enables auto-reply (same intent as the YAML flag).
+ * Ollama (and any non-keyword path) returns `confidence: 'low'` — see intent-classifier.
+ * Escalating on low for `positive` / `pricing` / `qualification` meant real replies often got NO auto-reply.
+ * We only escalate low+confidence for intents where automation can do real damage without review.
+ *
+ * - `OUTREACH_AUTO_REPLY_LOW_CONFIDENCE=1` — never escalate on low confidence.
+ * - `=0` / `false` — escalate on meeting/referral/negative even in fully_automatic mode.
  */
 function allowLowConfidenceAutoReply(): boolean {
   const v = process.env.OUTREACH_AUTO_REPLY_LOW_CONFIDENCE?.trim()
   if (v === 'true' || v === '1') return true
   if (v === 'false' || v === '0') return false
   return getAutomationMode() === 'fully_automatic'
+}
+
+/** Low confidence + these intents → human (wrong meeting/referral/negative is costly). Safe templates still run for positive/pricing/qualification. */
+function lowConfidenceBlocksAutoReply(intent: ClassifyResult['intent']): boolean {
+  return intent === 'meeting' || intent === 'referral' || intent === 'negative'
+}
+
+function hasStrongQualificationSignal(updates: Record<string, unknown>): boolean {
+  // `description` alone is too noisy for re-routing (e.g. generic long objections).
+  const keys = Object.keys(updates)
+  return keys.some((k) => k !== 'description')
+}
+
+/** Optional row id from Baileys inbound insert — we stamp `outreach_log.status` with classifier + routing. */
+export type InboundReplyMeta = { inboundLogId?: string | null }
+
+async function patchInboundLogStatus(logId: string | null | undefined, status: string): Promise<void> {
+  if (!logId) return
+  try {
+    await db.update(outreachLog).set({ status, updatedAt: new Date() }).where(eq(outreachLog.id, logId))
+  } catch (e) {
+    console.warn('[inbound-reply] inbound log status patch failed:', e instanceof Error ? e.message : e)
+  }
 }
 
 function resolveTenantId(explicit?: string | null): string | undefined {
@@ -34,21 +66,54 @@ function resolvePhoneFromWaPeer(jid: string): string | null {
   return digits.length >= 10 ? digits : null
 }
 
-async function countRecentAutoReplies(leadId: string): Promise<number> {
-  const since = new Date(Date.now() - AUTO_REPLY_WINDOW_MS)
-  const rows = await db
-    .select({ count: sql<number>`count(*)::int` })
+function parsePositiveInt(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const v = raw?.trim()
+  const n = v ? Number.parseInt(v, 10) : fallback
+  if (!Number.isFinite(n)) return fallback
+  return Math.max(min, Math.min(max, n))
+}
+
+function historyMaxMessages(): number {
+  return parsePositiveInt(process.env.OUTREACH_REPLY_HISTORY_MAX_MESSAGES, DEFAULT_HISTORY_MAX_MESSAGES, 1, 50)
+}
+
+function historyMaxChars(): number {
+  return parsePositiveInt(process.env.OUTREACH_REPLY_HISTORY_MAX_CHARS, DEFAULT_HISTORY_MAX_CHARS, 500, 20000)
+}
+
+export function buildConversationHistory(
+  rows: Array<{ direction: string; body: string | null }>,
+  maxChars: number,
+): string[] {
+  const lines = rows.map((r) => {
+    const speaker = r.direction === 'outbound' ? 'Us' : 'Them'
+    return `${speaker}: ${(r.body ?? '').slice(0, MAX_HISTORY_MESSAGE_CHARS)}`
+  })
+
+  const keptReversed: string[] = []
+  let total = 0
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i]!
+    const next = total + line.length
+    if (next > maxChars && keptReversed.length > 0) break
+    if (next > maxChars) continue
+    keptReversed.push(line)
+    total = next
+  }
+  return keptReversed.reverse()
+}
+
+async function loadConversationHistory(leadId: string): Promise<string[]> {
+  const recentLog = await db
+    .select({ direction: outreachLog.direction, body: outreachLog.body })
     .from(outreachLog)
-    .where(
-      and(
-        eq(outreachLog.leadId, leadId),
-        eq(outreachLog.channel, 'whatsapp'),
-        eq(outreachLog.direction, 'outbound'),
-        sql`${outreachLog.createdAt} >= ${since}`,
-        or(isNull(outreachLog.status), ne(outreachLog.status, 'internal_alert')),
-      ),
-    )
-  return rows[0]?.count ?? 0
+    .where(eq(outreachLog.leadId, leadId))
+    .orderBy(desc(outreachLog.createdAt))
+    .limit(historyMaxMessages())
+
+  // DB query is newest-first; responder context reads better oldest->newest.
+  const chronological = recentLog.reverse()
+  return buildConversationHistory(chronological, historyMaxChars())
 }
 
 async function removePendingWaJobsForLead(leadId: string) {
@@ -77,6 +142,7 @@ async function tryInboundReplyWithoutActiveSequence(
   waPeer: string,
   messageBody: string,
   tenantId?: string | null,
+  meta?: InboundReplyMeta,
 ): Promise<void> {
   const [lead] = await db
     .select({
@@ -91,25 +157,6 @@ async function tryInboundReplyWithoutActiveSequence(
     .limit(1)
   if (!lead) return
 
-  const [priorOutbound] = await db
-    .select({ id: outreachLog.id })
-    .from(outreachLog)
-    .where(
-      and(
-        eq(outreachLog.leadId, leadId),
-        eq(outreachLog.channel, 'whatsapp'),
-        eq(outreachLog.direction, 'outbound'),
-      ),
-    )
-    .limit(1)
-
-  if (!priorOutbound && lead.source !== 'whatsapp_inbound') {
-    console.log(
-      `[inbound-reply] Inbound for ${leadId} ignored: no prior WA outbound and not WhatsApp-first lead (source=${lead.source ?? 'null'}).`,
-    )
-    return
-  }
-
   let classification: ClassifyResult
   try {
     classification = await classifyReply(messageBody)
@@ -119,19 +166,49 @@ async function tryInboundReplyWithoutActiveSequence(
   }
   console.log(`[inbound-reply] Lead ${leadId} (no active sequence): intent=${classification.intent} (${classification.confidence})`)
 
-  if (classification.confidence === 'low' && !allowLowConfidenceAutoReply()) {
-    await sendFounderAlert(leadId, 'escalation', messageBody, resolveTenantId(tenantId))
-    console.log(`[inbound-reply] Low confidence — no auto-reply (set OUTREACH_AUTO_REPLY_LOW_CONFIDENCE=1 to override)`)
-    return
-  }
-
   const newQD = extractQualificationFromMessage(messageBody, {})
   let effectiveIntent = classification.intent
   if (
-    Object.keys(newQD).length > 0 &&
+    hasStrongQualificationSignal(newQD) &&
     (classification.intent === 'positive' || classification.intent === 'question' || classification.intent === 'unknown')
   ) {
     effectiveIntent = 'qualification'
+  }
+
+  logWaAgent({
+    component: 'inbound-reply',
+    action: 'classified',
+    leadId,
+    tenantId: resolveTenantId(tenantId) ?? undefined,
+    intent: effectiveIntent,
+    confidence: classification.confidence,
+    mode: 'no_sequence',
+  })
+
+  await patchInboundLogStatus(
+    meta?.inboundLogId,
+    `routed:${effectiveIntent}:${classification.confidence}`,
+  )
+
+  if (
+    classification.confidence === 'low' &&
+    !allowLowConfidenceAutoReply() &&
+    lowConfidenceBlocksAutoReply(classification.intent)
+  ) {
+    await patchInboundLogStatus(meta?.inboundLogId, `routed:${effectiveIntent}:${classification.confidence}:hitl`)
+    logWaAgent({
+      component: 'inbound-reply',
+      action: 'skipped',
+      reason: 'hitl',
+      leadId,
+      tenantId: resolveTenantId(tenantId) ?? undefined,
+      intent: effectiveIntent,
+      confidence: classification.confidence,
+      mode: 'no_sequence',
+    })
+    await sendFounderAlert(leadId, 'escalation', messageBody, resolveTenantId(tenantId))
+    console.log(`[inbound-reply] Low confidence — no auto-reply (set OUTREACH_AUTO_REPLY_LOW_CONFIDENCE=1 to override)`)
+    return
   }
 
   if (classification.intent === 'referral' && classification.referralContact?.phone) {
@@ -142,21 +219,7 @@ async function tryInboundReplyWithoutActiveSequence(
     )
   }
 
-  const cap = maxInboundAutoReplies()
-  const autoReplyCount = await countRecentAutoReplies(leadId)
-  if (autoReplyCount >= cap) {
-    await sendFounderAlert(leadId, 'max_turns', messageBody, resolveTenantId(tenantId))
-    console.log(`[inbound-reply] Max auto-replies (${cap}) reached for ${leadId} — escalating to human`)
-    return
-  }
-
-  const recentLog = await db
-    .select({ direction: outreachLog.direction, body: outreachLog.body })
-    .from(outreachLog)
-    .where(eq(outreachLog.leadId, leadId))
-    .orderBy(desc(outreachLog.createdAt))
-    .limit(6)
-  const history = recentLog.reverse().map((r) => `${r.direction === 'outbound' ? 'Us' : 'Them'}: ${(r.body ?? '').slice(0, 200)}`)
+  const history = await loadConversationHistory(leadId)
 
   const responseCtx: ResponseContext = {
     leadName: lead.name || 'Компания',
@@ -177,7 +240,7 @@ async function tryInboundReplyWithoutActiveSequence(
   if (response) {
     const phoneDigits = resolvePhoneFromWaPeer(waPeer)
     if (phoneDigits) {
-      await whatsappOutreachQueue.add(
+      const job = await whatsappOutreachQueue.add(
         'send',
         {
           leadId,
@@ -187,8 +250,32 @@ async function tryInboundReplyWithoutActiveSequence(
         },
         { removeOnComplete: true },
       )
+      logWaAgent({
+        component: 'inbound-reply',
+        action: 'queued',
+        jobId: job.id,
+        leadId,
+        tenantId: resolveTenantId(tenantId) ?? undefined,
+        intent: effectiveIntent,
+        confidence: classification.confidence,
+        mode: 'no_sequence',
+      })
+      await patchInboundLogStatus(
+        meta?.inboundLogId,
+        `routed:${effectiveIntent}:${classification.confidence}:replied`,
+      )
       console.log(`[inbound-reply] Queued no-sequence auto-response to ${leadId} (${effectiveIntent})`)
+    } else {
+      await patchInboundLogStatus(
+        meta?.inboundLogId,
+        `routed:${effectiveIntent}:${classification.confidence}:no_wa_digits`,
+      )
     }
+  } else {
+    await patchInboundLogStatus(
+      meta?.inboundLogId,
+      `routed:${effectiveIntent}:${classification.confidence}:no_reply_body`,
+    )
   }
 
   if (['positive', 'pricing', 'qualification'].includes(effectiveIntent)) {
@@ -201,6 +288,7 @@ export async function handleInboundReply(
   waPeer: string,
   messageBody: string,
   tenantId?: string | null,
+  meta?: InboundReplyMeta,
 ) {
   if (!leadId) return
 
@@ -211,7 +299,7 @@ export async function handleInboundReply(
     .limit(1)
 
   if (!state) {
-    await tryInboundReplyWithoutActiveSequence(leadId, waPeer, messageBody, tenantId)
+    await tryInboundReplyWithoutActiveSequence(leadId, waPeer, messageBody, tenantId, meta)
     return
   }
 
@@ -224,7 +312,52 @@ export async function handleInboundReply(
   }
   console.log(`[inbound-reply] Lead ${leadId}: intent=${classification.intent} (${classification.confidence})`)
 
-  if (classification.confidence === 'low' && !allowLowConfidenceAutoReply()) {
+  const currentQD = (state.qualificationData ?? {}) as Record<string, unknown>
+  const newQD = extractQualificationFromMessage(messageBody, currentQD)
+  const mergedQD = { ...currentQD, ...newQD }
+
+  let effectiveIntent = classification.intent
+  if (
+    hasStrongQualificationSignal(newQD) &&
+    (classification.intent === 'positive' || classification.intent === 'question' || classification.intent === 'unknown')
+  ) {
+    effectiveIntent = 'qualification'
+  }
+
+  await patchInboundLogStatus(
+    meta?.inboundLogId,
+    `routed:${effectiveIntent}:${classification.confidence}:sequence`,
+  )
+
+  logWaAgent({
+    component: 'inbound-reply',
+    action: 'classified',
+    leadId,
+    tenantId: resolveTenantId(tenantId ?? state.tenantId) ?? undefined,
+    intent: effectiveIntent,
+    confidence: classification.confidence,
+    mode: 'sequence',
+  })
+
+  if (
+    classification.confidence === 'low' &&
+    !allowLowConfidenceAutoReply() &&
+    lowConfidenceBlocksAutoReply(classification.intent)
+  ) {
+    await patchInboundLogStatus(
+      meta?.inboundLogId,
+      `routed:${effectiveIntent}:${classification.confidence}:sequence:hitl`,
+    )
+    logWaAgent({
+      component: 'inbound-reply',
+      action: 'skipped',
+      reason: 'hitl',
+      leadId,
+      tenantId: resolveTenantId(tenantId ?? state.tenantId) ?? undefined,
+      intent: effectiveIntent,
+      confidence: classification.confidence,
+      mode: 'sequence',
+    })
     await db
       .update(leadSequenceState)
       .set({
@@ -237,15 +370,6 @@ export async function handleInboundReply(
     await sendFounderAlert(leadId, 'escalation', messageBody, resolveTenantId(tenantId ?? state.tenantId))
     console.log(`[inbound-reply] Low confidence — escalated, no auto-reply`)
     return
-  }
-
-  const currentQD = (state.qualificationData ?? {}) as Record<string, unknown>
-  const newQD = extractQualificationFromMessage(messageBody, currentQD)
-  const mergedQD = { ...currentQD, ...newQD }
-
-  let effectiveIntent = classification.intent
-  if (Object.keys(newQD).length > 0 && (classification.intent === 'positive' || classification.intent === 'question' || classification.intent === 'unknown')) {
-    effectiveIntent = 'qualification'
   }
 
   await db
@@ -263,6 +387,10 @@ export async function handleInboundReply(
   }
 
   if (classification.intent === 'negative') {
+    await patchInboundLogStatus(
+      meta?.inboundLogId,
+      `routed:${effectiveIntent}:${classification.confidence}:sequence:negative`,
+    )
     const { defaultCooldownMs } = getAutomationLimits()
     await db.update(leadSequenceState).set({ status: 'cold', updatedAt: new Date() }).where(eq(leadSequenceState.id, state.id))
     await db
@@ -273,11 +401,25 @@ export async function handleInboundReply(
       })
       .where(eq(leads.id, leadId))
     await removePendingWaJobsForLead(leadId)
+    logWaAgent({
+      component: 'inbound-reply',
+      action: 'skipped',
+      reason: 'negative_stop',
+      leadId,
+      tenantId: resolveTenantId(tenantId ?? state.tenantId) ?? undefined,
+      intent: effectiveIntent,
+      confidence: classification.confidence,
+      mode: 'sequence',
+    })
     console.log(`[inbound-reply] Lead ${leadId} marked cold — no auto-reply sent`)
     return
   }
 
   if (classification.intent === 'meeting') {
+    await patchInboundLogStatus(
+      meta?.inboundLogId,
+      `routed:${effectiveIntent}:${classification.confidence}:sequence:meeting`,
+    )
     const { defaultCooldownMs } = getAutomationLimits()
     await db.update(leadSequenceState).set({ status: 'completed', updatedAt: new Date() }).where(eq(leadSequenceState.id, state.id))
     await db
@@ -288,6 +430,16 @@ export async function handleInboundReply(
       })
       .where(eq(leads.id, leadId))
     await sendFounderAlert(leadId, 'meeting', messageBody, resolveTenantId(tenantId ?? state.tenantId))
+    logWaAgent({
+      component: 'inbound-reply',
+      action: 'skipped',
+      reason: 'meeting_handoff',
+      leadId,
+      tenantId: resolveTenantId(tenantId ?? state.tenantId) ?? undefined,
+      intent: effectiveIntent,
+      confidence: classification.confidence,
+      mode: 'sequence',
+    })
     console.log(`[inbound-reply] Lead ${leadId} meeting confirmed — no auto-reply sent`)
     return
   }
@@ -299,21 +451,7 @@ export async function handleInboundReply(
     .limit(1)
   if (!lead) return
 
-  const cap = maxInboundAutoReplies()
-  const autoReplyCount = await countRecentAutoReplies(leadId)
-  if (autoReplyCount >= cap) {
-    await sendFounderAlert(leadId, 'max_turns', messageBody, resolveTenantId(tenantId ?? state.tenantId))
-    console.log(`[inbound-reply] Max auto-replies (${cap}) reached for ${leadId} — escalating to human`)
-    return
-  }
-
-  const recentLog = await db
-    .select({ direction: outreachLog.direction, body: outreachLog.body })
-    .from(outreachLog)
-    .where(eq(outreachLog.leadId, leadId))
-    .orderBy(desc(outreachLog.createdAt))
-    .limit(6)
-  const history = recentLog.reverse().map((r) => `${r.direction === 'outbound' ? 'Us' : 'Them'}: ${(r.body ?? '').slice(0, 200)}`)
+  const history = await loadConversationHistory(leadId)
 
   const responseCtx: ResponseContext = {
     leadName: lead.name || 'Компания',
@@ -334,14 +472,38 @@ export async function handleInboundReply(
   if (response) {
     const phoneDigits = resolvePhoneFromWaPeer(waPeer)
     if (phoneDigits) {
-      await whatsappOutreachQueue.add('send', {
+      const job = await whatsappOutreachQueue.add('send', {
         leadId,
         phoneDigits,
         body: response.body,
         tenantId: resolveTenantId(tenantId ?? state.tenantId),
       }, { removeOnComplete: true })
+      logWaAgent({
+        component: 'inbound-reply',
+        action: 'queued',
+        jobId: job.id,
+        leadId,
+        tenantId: resolveTenantId(tenantId ?? state.tenantId) ?? undefined,
+        intent: effectiveIntent,
+        confidence: classification.confidence,
+        mode: 'sequence',
+      })
+      await patchInboundLogStatus(
+        meta?.inboundLogId,
+        `routed:${effectiveIntent}:${classification.confidence}:sequence:replied`,
+      )
       console.log(`[inbound-reply] Queued auto-response to ${leadId} (${effectiveIntent})`)
+    } else {
+      await patchInboundLogStatus(
+        meta?.inboundLogId,
+        `routed:${effectiveIntent}:${classification.confidence}:sequence:no_wa_digits`,
+      )
     }
+  } else {
+    await patchInboundLogStatus(
+      meta?.inboundLogId,
+      `routed:${effectiveIntent}:${classification.confidence}:sequence:no_reply_body`,
+    )
   }
 
   if (['positive', 'pricing', 'qualification'].includes(effectiveIntent)) {
@@ -367,7 +529,6 @@ async function sendFounderAlert(leadId: string, intent: string, message: string,
     qualification: '📋',
     referral: '🔄',
     escalation: '⚠️',
-    max_turns: '🛑',
   }
 
   const body = `${icons[intent] || '📨'} ${lead?.name || 'Unknown'} (${lead?.city || '?'})
