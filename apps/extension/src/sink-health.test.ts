@@ -18,9 +18,12 @@ describe('sink-health helpers', () => {
     expect(h1.api.lastInserted).toBe(1)
     expect(h1.api.lastDuplicate).toBe(2)
     expect(h1.api.lastRejected).toBe(3)
+    expect(h1.api.history.length).toBe(1)
     const h2 = applySinkEvent(h1, 'error', 'API: timeout', '2026-01-01T00:00:01.000Z')
     expect(h2.api.status).toBe('error')
     expect(h2.api.lastMessage).toContain('timeout')
+    expect(h2.api.history.length).toBe(2)
+    expect(h2.api.history[0]?.level).toBe('error')
   })
 
   it('stores sent count for non-api sinks', () => {
@@ -56,6 +59,16 @@ describe('sink-health helpers', () => {
     expect(h.api.retryPending).toBe(1)
     expect(h.webhook.retryPending).toBe(1)
     expect(h.sheets.retryPending).toBe(0)
+  })
+
+  it('keeps only the latest 5 history entries', () => {
+    let h = defaultSinkHealth()
+    for (let i = 0; i < 8; i++) {
+      h = applySinkEvent(h, 'info', `API: inserted=${i} duplicate=0 rejected=0`, `2026-01-01T00:00:0${i}.000Z`)
+    }
+    expect(h.api.history.length).toBe(5)
+    expect(h.api.history[0]?.message).toContain('inserted=7')
+    expect(h.api.history[4]?.message).toContain('inserted=3')
   })
 })
 

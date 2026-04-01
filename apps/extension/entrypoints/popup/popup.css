@@ -658,6 +658,55 @@
   background: rgba(248, 113, 113, 0.12);
 }
 
+.ly-sink-timeline {
+  margin-top: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  padding-top: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.ly-sink-timeline-item {
+  display: grid;
+  grid-template-columns: 10px auto 1fr;
+  gap: 6px;
+  align-items: center;
+  font-size: 10px;
+  color: var(--ly-muted);
+}
+
+.ly-sink-timeline-item em {
+  font-style: normal;
+  color: #cbd5e1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ly-sink-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.ly-sink-dot--ok {
+  background: var(--ly-success);
+}
+
+.ly-sink-dot--warn {
+  background: var(--ly-warn);
+}
+
+.ly-sink-dot--err {
+  background: #f87171;
+}
+
+.ly-sink-timeline-empty {
+  font-size: 10px;
+  color: var(--ly-muted);
+}
+
 .ly-bulk-msg {
   margin-top: 8px;
   padding: 8px 10px;

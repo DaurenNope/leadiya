@@ -13,14 +13,21 @@ export type SinkHealth = Record<
     lastInserted?: number
     lastDuplicate?: number
     lastRejected?: number
+    history: Array<{
+      at: string
+      level: 'info' | 'warn' | 'error'
+      message: string
+    }>
   }
 >
 
+const SINK_HISTORY_LIMIT = 5
+
 export function defaultSinkHealth(): SinkHealth {
   return {
-    api: { status: 'idle', lastMessage: '', lastAt: null, retryPending: 0 },
-    webhook: { status: 'idle', lastMessage: '', lastAt: null, retryPending: 0 },
-    sheets: { status: 'idle', lastMessage: '', lastAt: null, retryPending: 0 },
+    api: { status: 'idle', lastMessage: '', lastAt: null, retryPending: 0, history: [] },
+    webhook: { status: 'idle', lastMessage: '', lastAt: null, retryPending: 0, history: [] },
+    sheets: { status: 'idle', lastMessage: '', lastAt: null, retryPending: 0, history: [] },
   }
 }
 
@@ -58,6 +65,7 @@ export function applySinkEvent(
       status: level === 'error' ? 'error' : 'ok',
       lastMessage: message,
       lastAt: atIso,
+      history: [{ at: atIso, level, message }, ...(next.history || [])].slice(0, SINK_HISTORY_LIMIT),
     },
   }
 }

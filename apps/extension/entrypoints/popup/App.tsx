@@ -34,6 +34,11 @@ type SinkHealthItem = {
   lastInserted?: number
   lastDuplicate?: number
   lastRejected?: number
+  history: Array<{
+    at: string
+    level: 'info' | 'warn' | 'error'
+    message: string
+  }>
 }
 type Status = {
   sessionCount: number
@@ -648,6 +653,18 @@ export default function App() {
                           <span className="ly-chip ly-chip--ok">sent {item.lastSent}</span>
                         </div>
                       ) : null}
+                      <div className="ly-sink-timeline">
+                        {(item?.history || []).slice(0, 5).map((ev, idx) => (
+                          <div key={`${ev.at}-${idx}`} className="ly-sink-timeline-item">
+                            <i className={`ly-sink-dot ly-sink-dot--${ev.level === 'error' ? 'err' : ev.level === 'warn' ? 'warn' : 'ok'}`} />
+                            <span>{new Date(ev.at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                            <em>{ev.message.replace(/^(API|Webhook|Sheets):\s*/, '')}</em>
+                          </div>
+                        ))}
+                        {(item?.history || []).length === 0 ? (
+                          <div className="ly-sink-timeline-empty">Нет недавних партий</div>
+                        ) : null}
+                      </div>
                     </div>
                   )
                 })}
